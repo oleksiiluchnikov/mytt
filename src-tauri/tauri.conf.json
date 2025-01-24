@@ -31,10 +31,9 @@
         "decorations": true,
         "hiddenTitle": true,
         "acceptFirstMouse": true,
+        "width": 0,
+        "height": 0,
         "resizable": false,
-        "title": "mytt",
-        "width": 200,
-        "height": 130,
         "useHttpsScheme": true
       }
     ],
