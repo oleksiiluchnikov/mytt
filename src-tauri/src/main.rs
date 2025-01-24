@@ -133,23 +133,18 @@ fn reset_timer(stopwatch: tauri::State<Mutex<Stopwatch>>) {
 
 #[tauri::command]
 fn submit(stopwatch: tauri::State<Mutex<Stopwatch>>) -> Result<(), String> {
-    let mut front_app_name = get_frontmost_application();
-    if front_app_name.is_none() {
-        front_app_name = Some("Unknown".to_string());
-    }
+    let front_app_name = get_frontmost_application().unwrap_or_else(|| "Unknown".to_string());
     let mut stopwatch = stopwatch.lock().map_err(|e| e.to_string())?;
     let time = stopwatch.format_time();
 
     if let Some(script_on_submit) = script_on_submit() {
-        let mut child = Command::new("sh")
+        Command::new("sh")
             .arg("-c")
-            .arg(script_on_submit)
-            .arg(time)
-            .arg(front_app_name.unwrap_or("Unknown".to_string()))
-            .spawn()
+            .arg(&script_on_submit)
+            .arg(&time)
+            .arg(&front_app_name)
+            .output()
             .map_err(|e| e.to_string())?;
-
-        let _ = child.wait();
     }
 
     stopwatch.stop();
