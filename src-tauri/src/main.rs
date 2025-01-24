@@ -2,13 +2,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
-use crate::config::script_on_submit;
+use crate::config::path_to_script_on_submit;
 #[cfg(target_os = "macos")]
 use cocoa::base::id;
 #[cfg(target_os = "macos")]
 use objc::{class, msg_send, sel, sel_impl};
 use std::process::Command;
+use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
+use std::thread;
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
@@ -32,6 +34,33 @@ macro_rules! nsstring_to_string {
 pub struct Stopwatch {
     start_time: Option<Instant>,
     paused_duration: Duration,
+}
+
+pub struct CommandExecutor {
+    sender: Sender<(String, String, String)>,
+}
+
+impl CommandExecutor {
+    pub fn new() -> Self {
+        let (sender, receiver) = channel();
+
+        thread::spawn(move || {
+            for (script, time, app_name) in receiver {
+                let _ = Command::new("sh")
+                    .arg("-c")
+                    .arg(&script)
+                    .arg(&time)
+                    .arg(&app_name)
+                    .output();
+            }
+        });
+
+        Self { sender }
+    }
+
+    pub fn execute(&self, script: String, time: String, app_name: String) {
+        let _ = self.sender.send((script, time, app_name));
+    }
 }
 
 impl Stopwatch {
@@ -132,19 +161,17 @@ fn reset_timer(stopwatch: tauri::State<Mutex<Stopwatch>>) {
 }
 
 #[tauri::command]
-fn submit(stopwatch: tauri::State<Mutex<Stopwatch>>) -> Result<(), String> {
+fn submit(
+    stopwatch: tauri::State<Mutex<Stopwatch>>,
+    command_executor: tauri::State<CommandExecutor>,
+) -> Result<(), String> {
     let front_app_name = get_frontmost_application().unwrap_or_else(|| "Unknown".to_string());
     let mut stopwatch = stopwatch.lock().map_err(|e| e.to_string())?;
     let time = stopwatch.format_time();
 
-    if let Some(script_on_submit) = script_on_submit() {
-        Command::new("sh")
-            .arg("-c")
-            .arg(&script_on_submit)
-            .arg(&time)
-            .arg(&front_app_name)
-            .output()
-            .map_err(|e| e.to_string())?;
+    if let Some(path) = path_to_script_on_submit() {
+        let script = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        command_executor.execute(script, time, front_app_name);
     }
 
     stopwatch.stop();
@@ -170,6 +197,7 @@ fn get_frontmost_application() -> Option<String> {
 
 pub fn main() {
     let stopwatch = Mutex::new(Stopwatch::new());
+    let command_executor = CommandExecutor::new();
     get_frontmost_application();
 
     tauri::Builder::default()
@@ -183,6 +211,7 @@ pub fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .manage(stopwatch)
+        .manage(command_executor)
         .invoke_handler(tauri::generate_handler![
             start_timer,
             stop_timer,
