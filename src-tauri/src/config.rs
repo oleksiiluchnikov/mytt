@@ -1,10 +1,9 @@
 use lazy_static::lazy_static;
-use serde::{Deserialize, Serialize};
 use std::env;
-use std::fs::{read, read_to_string};
+// use std::fs::{read, read_to_string};
 use std::path::PathBuf;
 
-const THEMES_DIR: &str = "themes";
+// const THEMES_DIR: &str = "themes";
 
 lazy_static! {
     // static ref KEY_COMBO: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -16,7 +15,7 @@ lazy_static! {
     pub static ref CACHE_DIR: PathBuf = compute_cache_dir().unwrap();
 }
 
-pub fn script_on_submit() -> Option<PathBuf> {
+pub fn path_to_script_on_submit() -> Option<PathBuf> {
     let path = xdg_config_home().join("on_submit.sh");
     if path.exists() {
         return Some(path);
