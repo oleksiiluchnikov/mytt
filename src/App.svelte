@@ -1,20 +1,41 @@
 <script>
-/**
- * @file Manages the main functionality of a timer application.
- * @author Oleksii
- */
-
 import { invoke } from '@tauri-apps/api/core';
 import { writable, derived } from 'svelte/store';
 
 /** Timer status. It can be 'running', 'paused', or 'stopped'. */
 const timerStatus = writable('stopped');
 
-/** Total time for the timer in seconds */
-const totalTime = writable(1500); // 25 minutes by default
+/** Work session duration in seconds */
+const workDuration = writable(1500); // 25 minutes by default
+
+/** Short break duration in seconds */
+const shortBreakDuration = writable(300); // 5 minutes
+
+/** Long break duration in seconds */
+const longBreakDuration = writable(900); // 15 minutes
+
+/** Number of work sessions before a long break */
+const sessionsBeforeLongBreak = writable(4);
+
+/** Current session type: 'work', 'shortBreak', or 'longBreak' */
+const sessionType = writable('work');
+
+/** Number of completed work sessions */
+const completedSessions = writable(0);
+
+/** Total time for the current session in seconds */
+const totalTime = derived([sessionType, workDuration, shortBreakDuration, longBreakDuration],
+    ([$sessionType, $workDuration, $shortBreakDuration, $longBreakDuration]) => {
+        switch($sessionType) {
+            case 'work': return $workDuration;
+            case 'shortBreak': return $shortBreakDuration;
+            case 'longBreak': return $longBreakDuration;
+        }
+    }
+);
 
 /** Remaining time in seconds */
-const remainingTime = writable(1500); // 25 minutes by default
+const remainingTime = writable(1500); // Start with work duration
 
 /** Progress value for the progress bar (100 to 0) */
 const progress = derived(remainingTime, $remainingTime => $remainingTime);
@@ -23,7 +44,7 @@ const progress = derived(remainingTime, $remainingTime => $remainingTime);
 const progressColor = derived([remainingTime, totalTime], ([$remainingTime, $totalTime]) => {
     const ratio = $remainingTime / $totalTime;
     const red = Math.round(255 * Math.max(0, 1 - ratio));
-    const green = Math.round(255 * Math.min(1, ratio));
+    const green = Math.round(100 + (100 * Math.min(1, ratio))); // Adjusted green range
     const blue = 0;
     return `rgb(${red}, ${green}, ${blue})`;
 });
@@ -102,11 +123,28 @@ async function toggleTimer() {
                         return t - 1;
                     } else {
                         stopTimer();
-                        timerStatus.set('stopped');
-                        return 0;
+                        transitionToNextSession();
+                        return $totalTime;
                     }
                 });
             }, 1000);
+        }
+
+        function transitionToNextSession() {
+            sessionType.update(currentType => {
+                if (currentType === 'work') {
+                    completedSessions.update(s => s + 1);
+                    if ($completedSessions % $sessionsBeforeLongBreak === 0) {
+                        return 'longBreak';
+                    } else {
+                        return 'shortBreak';
+                    }
+                } else {
+                    return 'work';
+                }
+            });
+            remainingTime.set($totalTime);
+            timerStatus.set('stopped');
         }
 
         function stopTimer() {
@@ -171,7 +209,7 @@ function onmouseenter() {
             <button on:click={stopAndReset}>
                 { $timerStatus === 'stopped' ? 'Reset' : 'Stop' }
             </button>
-            <button on:click={submit}>
+            <button on:mouseup={submit}>
                 Submit
             </button>
         </div>
@@ -179,6 +217,12 @@ function onmouseenter() {
 </main>
 
 <style>
+.session-type {
+    font-size: 14px;
+    color: #fffffbaa;
+    font-family: "San Francisco Display", sans-serif;
+    margin-bottom: 5px;
+}
 @keyframes blink {
     0% { opacity: 1; }
     50% { opacity: 0; }
