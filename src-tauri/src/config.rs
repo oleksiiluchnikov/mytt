@@ -1,3 +1,4 @@
+use crate::notify_on_error;
 use lazy_static::lazy_static;
 use std::env;
 // use std::fs::{read, read_to_string};
@@ -11,17 +12,33 @@ lazy_static! {
     pub static ref CONFIG_DIRS: Vec<PathBuf> = config_dirs();
     pub static ref APP_NAME: String = env!("CARGO_PKG_NAME").to_string();
     pub static ref RUNTIME_DIR: PathBuf = compute_runtime_dir().unwrap();
+    pub static ref SCRIPTS_DIR: PathBuf = scripts_dir();
     pub static ref DATA_DIR: PathBuf = compute_data_dir().unwrap();
     pub static ref CACHE_DIR: PathBuf = compute_cache_dir().unwrap();
 }
 
-pub fn path_to_script_on_submit() -> Option<PathBuf> {
-    let path = xdg_config_home().join("on_submit.sh");
-    if path.exists() {
-        return Some(path);
-    }
+fn scripts_dir() -> PathBuf {
+    CONFIG_DIRS
+        .iter()
+        .map(|d| d.join("scripts"))
+        .find(|d| d.exists())
+        .unwrap_or_else(|| {
+            // mkidr -p $XDG_CONFIG_HOME/tauri/scripts
+            let dir = CONFIG_DIRS[0].join("scripts");
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        })
+}
 
-    None
+pub fn get_script(script_name: &str) -> Option<PathBuf> {
+    let path = SCRIPTS_DIR.join(script_name);
+    if !path.exists() {
+        let path_display = path.display();
+        let msg = format!("{} script not found at {}", script_name, path_display).to_string();
+        notify_on_error!(msg);
+        return None;
+    }
+    Some(path)
 }
 
 fn home_dir() -> Option<PathBuf> {
