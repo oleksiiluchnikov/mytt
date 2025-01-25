@@ -32,6 +32,7 @@ lazy_static = "1.5.0"
 anyhow = "1.0.95"
 dirs-next = "2.0.0"
 tauri-plugin-notification = "2.0.0"
+serde_yaml = "0.9.34"
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

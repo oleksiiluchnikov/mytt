@@ -1,22 +1,31 @@
 <script>
 import { invoke } from '@tauri-apps/api/core';
-import { writable, derived } from 'svelte/store';
-import { onMount, onDestroy } from 'svelte';
+import { writable, derived, get } from 'svelte/store';
+import { onMount, onDestroy, afterUpdate } from 'svelte';
 import { listen } from '@tauri-apps/api/event';
-import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
-import { afterUpdate } from 'svelte';
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from '@tauri-apps/plugin-notification';
+import { getCurrentWindow, LogicalPosition, LogicalSize } from '@tauri-apps/api/window';
+import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 
-const START_LABEL = 'start';
-const PAUSE_LABEL = 'pause';
-const RESUME_LABEL = 'resume';
-const STOP_LABEL = 'stop';
-const LOG_LABEL = 'log';
-const SKIP_BREAK_LABEL = 'skip break';
+const LABELS = {
+    START: 'start',
+    PAUSE: 'pause',
+    RESUME: 'resume',
+    STOP: 'stop',
+    LOG: 'log',
+    SKIP_BREAK: 'skip'
+};
+
+const SESSION_TYPES = {
+    WORK: 'work',
+    SHORT_BREAK: 'shortBreak',
+    LONG_BREAK: 'longBreak'
+};
+
+const TIMER_STATUS = {
+    RUNNING: 'running',
+    PAUSED: 'paused',
+    STOPPED: 'stopped'
+};
 // when using `"withGlobalTauri": true`, you may use
 // const { isPermissionGranted, requestPermission, sendNotification, } = window.__TAURI__.notification;
 
@@ -41,47 +50,61 @@ async function notify(options) {
     }
 }
 
-/** Timer status. It can be 'running', 'paused', or 'stopped'. */
-const timerStatus = writable('stopped');
+/**
+ * Creates a writable store for managing the state of a timer.
+ */
+const createTimerStore = () => {
+    const { subscribe, set, update } = writable({
+        theme: 'dark',
+        status: TIMER_STATUS.STOPPED,
+        sessionType: SESSION_TYPES.WORK,
+        workDuration: 1500,
+        shortBreakDuration: 300,
+        longBreakDuration: 900,
+        sessionsBeforeLongBreak: 4,
+        annoyingLevel: null,
+        completedSessions: 0,
+        remainingTime: 1500,
+        frontmostApp: ''
+    });
 
-/** Work session duration in seconds */
-const workDuration = writable(1500); // 25 minutes by default
+    return {
+        subscribe,
+        update,
+        setStatus: (/** @type {any} */ status) => update(s => ({ ...s, status })),
+        setSessionType: (/** @type {any} */ type) => update(s => ({ ...s, sessionType: type })),
+        setRemainingTime: (/** @type {any} */ time) => update(s => ({ ...s, remainingTime: time })),
+        incrementCompletedSessions: () => update(s => ({ ...s, completedSessions: s.completedSessions + 1 })),
+        setFrontmostApp: (/** @type {any} */ app) => update(s => ({ ...s, frontmostApp: app })),
+        updateConfig: (/** @type {any} */ config) => update(s => ({ ...s, ...config }))
+    };
+};
 
-/** Short break duration in seconds */
-const shortBreakDuration = writable(300); // 5 minutes
+const timerStore = createTimerStore();
+const isBlinking = derived(timerStore, $store => {
+    const { status, annoyingLevel } = $store;
+    return (status === TIMER_STATUS.STOPPED || status === TIMER_STATUS.PAUSED) && annoyingLevel === 'high';
+});
 
-/** Long break duration in seconds */
-const longBreakDuration = writable(900); // 15 minutes
+$: if ($isBlinking) {
+    triggerAnnoyingBehavior();
+}
 
-/** Number of work sessions before a long break */
-const sessionsBeforeLongBreak = writable(4);
+$: backgroundColor = $timerStore.theme === 'dark' ? 'rgb(20, 20, 20)' : 'rgb(38, 38, 38)';
+$: backgroundColorLight = $timerStore.theme === 'dark' ? 'rgb(38, 38, 38)' : 'rgb(56, 56, 56)';
 
-/** Current session type: 'work', 'shortBreak', or 'longBreak' */
-const sessionType = writable('work');
-
-/** Number of completed work sessions */
-const completedSessions = writable(0);
-
-/** Total time for the current session in seconds */
-const totalTime = derived([sessionType, workDuration, shortBreakDuration, longBreakDuration],
-    ([$sessionType, $workDuration, $shortBreakDuration, $longBreakDuration]) => {
-        switch($sessionType) {
-            case 'work': return $workDuration;
-            case 'shortBreak': return $shortBreakDuration;
-            case 'longBreak': return $longBreakDuration;
-        }
+const totalTime = derived(timerStore, $store => {
+    switch($store.sessionType) {
+        case SESSION_TYPES.WORK: return $store.workDuration;
+        case SESSION_TYPES.SHORT_BREAK: return $store.shortBreakDuration;
+        case SESSION_TYPES.LONG_BREAK: return $store.longBreakDuration;
     }
-);
+});
 
-/** Remaining time in seconds */
-const remainingTime = writable(1500); // Start with work duration
+const progress = derived(timerStore, $store => $store.remainingTime);
 
-/** Progress value for the progress bar (100 to 0) */
-const progress = derived(remainingTime, $remainingTime => $remainingTime);
-
-/** Color for the progress bar, changing from green to red */
-const progressColor = derived([remainingTime, totalTime], ([$remainingTime, $totalTime]) => {
-    const ratio = $remainingTime / $totalTime;
+const progressColor = derived([timerStore, totalTime], ([$store, $totalTime]) => {
+    const ratio = $store.remainingTime / $totalTime;
     const endColor = [255, 89, 0];
     const startColor = [255, 0, 0];
     const red = Math.round(startColor[0] + ratio * (endColor[0] - startColor[0]));
@@ -90,240 +113,263 @@ const progressColor = derived([remainingTime, totalTime], ([$remainingTime, $tot
     return `rgb(${red}, ${green}, ${blue})`;
 });
 
-/** Displayed time format in 'HH:MM:SS' */
-const displayTime = derived([remainingTime, timerStatus], ([$remainingTime, $timerStatus]) => {
-    if ($timerStatus === 'stopped') {
-        return new Date($remainingTime * 1000).toISOString().substr(11, 8);
-    } else {
-        const hours = Math.floor($remainingTime / 3600);
-        const minutes = Math.floor(($remainingTime % 3600) / 60);
-        const seconds = $remainingTime % 60;
+const displayTime = derived(timerStore, $store => {
+    const formatTime = (/** @type {number} */ time) => {
+        const hours = Math.floor(time / 3600);
+        const minutes = Math.floor((time % 3600) / 60);
+        const seconds = time % 60;
         return [hours, minutes, seconds].map(unit => unit.toString().padStart(2, '0')).join(':');
-    }
+    };
+
+    return $store.status === TIMER_STATUS.STOPPED
+        ? new Date($store.remainingTime * 1000).toISOString().substr(11, 8)
+        : formatTime($store.remainingTime);
 });
-
-/** Frontmost application name */
-const frontmostApp = writable('');
-
-/**
-         * Updates the frontmost application name.
-         * @async
-         */
-async function updateFrontmostApp() {
-    frontmostApp.set(await invoke('get_frontmost_application').then(app => app));
-}
 
 /** @type {number} ID of the setInterval function. */
 let intervalId;
+let randomPositionIntervalId;
 
+const transitionToNextSession = () => {
+    const store = get(timerStore);
+    if (store.sessionType === SESSION_TYPES.WORK) {
+        timerStore.incrementCompletedSessions();
+        const nextSessionType = (store.completedSessions + 1) % store.sessionsBeforeLongBreak === 0
+            ? SESSION_TYPES.LONG_BREAK
+            : SESSION_TYPES.SHORT_BREAK;
+        timerStore.setSessionType(nextSessionType);
+        timerStore.setRemainingTime(store[`${nextSessionType}Duration`]);
+    } else {
+        timerStore.setSessionType(SESSION_TYPES.WORK);
+        timerStore.setRemainingTime(store.workDuration);
+    }
+    timerStore.setStatus(TIMER_STATUS.STOPPED);
+};
 
-function transitionToNextSession() {
-    sessionType.update(currentType => {
-        if (currentType === 'work') {
-            completedSessions.update(s => s + 1);
-            if ($completedSessions % $sessionsBeforeLongBreak === 0) {
-                return 'longBreak';
-            } else {
-                return 'shortBreak';
-            }
-        } else {
-            return 'work';
-        }
-    });
-    remainingTime.set($totalTime);
-    timerStatus.set('stopped');
-}
-
-/**
- * Runs the on_log script placed in the ~/.config/mytt/scripts directory.
- * @async
- */
-async function onLog() {
-    await invoke('on_log').catch(error => {
-        console.error('Error logting time:', error);
+const invokeWithErrorHandling = async (/** @type {string} */ action, /** @type {string} */ errorMessage) => {
+    try {
+        await invoke(action);
+    } catch (error) {
+        console.error(`${errorMessage}:`, error);
         // Handle the error appropriately, maybe show a user-friendly message
-    });
-}
+    }
+};
 
-async function onStart() {
-    await invoke('on_start').catch(error => {
-        console.error('Error starting:', error);
-        // Handle the error appropriately, maybe show a user-friendly message
-    });
+const onLog = () => invokeWithErrorHandling('on_log', 'Error logging time');
+
+const onStart = async () => {
+    await invokeWithErrorHandling('on_start', 'Error starting');
     startTimer();
-}
+};
 
-/**
-    * Starts the timer.
-    */
-async function startTimer() {
+const startTimer = () => {
+    stopAnnoyingBehavior();
     intervalId = setInterval(() => {
-        remainingTime.update(t => {
-            if (t > 0) {
-                return t-1;
-            } else {
-                onStop();
-                return $totalTime;
-            }
-        });
+        const store = get(timerStore);
+        if (store.remainingTime > 0) {
+            timerStore.setRemainingTime(store.remainingTime - 1);
+        } else {
+            clearInterval(intervalId);
+            intervalId = null;
+            onStop();
+        }
     }, 1000);
-    timerStatus.set('running');
-}
+    timerStore.setStatus(TIMER_STATUS.RUNNING);
+};
 
-/**
- * Toggles the timer between 'paused' and 'running'.
- * @async
- */
-async function onPause() {
-    await invoke('on_pause').catch(error => {
-        console.error('Error pausing:', error);
-    });
+const stopAnnoyingBehavior = () => {
+    if (randomPositionIntervalId) {
+        clearInterval(randomPositionIntervalId);
+        randomPositionIntervalId = null;
+    }
+    clearInterval(randomPositionIntervalId);
+};
+
+
+const triggerAnnoyingBehavior = async () => {
+    const { annoyingLevel } = $timerStore;
+    if (annoyingLevel !== 'high') return;
+
+    stopAnnoyingBehavior();
+
+    const notificationOptions = {
+        title: 'mytt',
+        body: 'Time to start working!',
+        icon: 'assets/icon.png',
+        sound: 'default'
+    };
+
+    await notify(notificationOptions);
+
+    randomPositionIntervalId = setInterval(setRandomPosition, 5000);
+};
+
+const onPause = async () => {
+    await invokeWithErrorHandling('on_pause', 'Error pausing');
     pauseTimer();
-}
+};
 
-/**
-* Pauses the timer.
-*/
-function pauseTimer() {
+const pauseTimer = () => {
     if (intervalId) {
         clearInterval(intervalId);
         intervalId = null;
     }
-    $timerStatus = 'paused';
-}
+    timerStore.setStatus(TIMER_STATUS.PAUSED);
+triggerAnnoyingBehavior();
+};
 
-async function onStop() {
-    await invoke('on_stop').catch(error => {
-        console.error('Error stopping:', error);
-        // Handle the error appropriately, maybe show a user-friendly message
-    });
+const onStop = async () => {
+    await invokeWithErrorHandling('on_stop', 'Error stopping');
     stopTimer();
     transitionToNextSession();
-}
+};
 
-function stopTimer() {
+const stopTimer = () => {
     if (intervalId) {
         clearInterval(intervalId);
         intervalId = null;
     }
-    timerStatus.set('stopped');
-    remainingTime.set($totalTime);
-}
+    timerStore.setStatus(TIMER_STATUS.STOPPED);
+    timerStore.setRemainingTime($totalTime);
+};
 
-async function onSkipBreak() {
-    await invoke('on_skip_break').catch(error => {
-        console.error('Error resetting:', error);
-        // Handle the error appropriately, maybe show a user-friendly message
-    });
+const onSkipBreak = async () => {
+    await invokeWithErrorHandling('on_skip_break', 'Error skipping break');
     skipBreak();
-}
+};
 
-function skipBreak() {
-    if ($sessionType === 'work') return;
-    sessionType.set('work');
-    remainingTime.set($workDuration);
-    timerStatus.set('stopped');
-}
+const skipBreak = () => {
+    if ($timerStore.sessionType === SESSION_TYPES.WORK) return;
+    timerStore.setSessionType(SESSION_TYPES.WORK);
+    timerStore.setRemainingTime($timerStore.workDuration);
+    timerStore.setStatus(TIMER_STATUS.STOPPED);
+};
 
-
-async function onResume() {
-    await invoke('on_resume').catch(error => {
-        console.error('Error resuming:', error);
-        // Handle the error appropriately, maybe show a user-friendly message
-    });
-    timerStatus.set('running');
+const onResume = async () => {
+    await invokeWithErrorHandling('on_resume', 'Error resuming');
+    timerStore.setStatus(TIMER_STATUS.RUNNING);
     startTimer();
-}
+};
 
-/**
-    * On pointerup event, call the corresponding function based on the button clicked.
-    * @param {PointerEvent} event - The pointerup event.
-    */
-function onPointerDown(event) {
-    const button = event.target
+const onPointerDown = (/** @type {{ target: any; }} */ event) => {
+    const button = event.target;
     if (!button) return;
-    switch (button.textContent) {
-        case START_LABEL:
-            onStart();
-            break;
-        case PAUSE_LABEL:
-            onPause();
-            break;
-        case RESUME_LABEL:
-            onResume();
-            break;
-        case STOP_LABEL:
-            onStop();
-            break;
+    const actionMap = {
+        [LABELS.START]: onStart,
+        [LABELS.PAUSE]: onPause,
+        [LABELS.RESUME]: onResume,
+        [LABELS.STOP]: onStop,
+        [LABELS.LOG]: onLog,
+        [LABELS.SKIP_BREAK]: onSkipBreak
+    };
+    const action = actionMap[button.textContent];
+    if (action) action();
+};
 
-        case LOG_LABEL:
-            onLog();
-            break;
-        case SKIP_BREAK_LABEL:
-            onSkipBreak();
-            break;
-    }
-}
-
-async function onBlur() {
-    document.body.style.backgroundColor = 'rgb(20, 20, 20)'
-    let buttons = document.querySelectorAll('button');
-    buttons.forEach(button => {
-        if (!button) return;
-        button.style.backgroundColor = 'rgb(38, 38, 38)';
+const updateStyles = (/** @type {string} */ bodyColor, /** @type {string} */ buttonColor) => {
+    // document.body.style.backgroundColor = bodyColor;
+    document.querySelector('main').style.backgroundColor = bodyColor;
+    document.querySelectorAll('button').forEach(button => {
+        if (button) button.style.backgroundColor = buttonColor;
     });
-}
-async function onFocus() {
-    document.body.style.backgroundColor = 'rgb(38, 38, 38)'
-    let buttons = document.querySelectorAll('button');
-    if (!buttons) return;
-    buttons.forEach(button => {
-        if (!button) return;
-        button.style.backgroundColor = 'rgb(56, 56, 56)';
-    });
-}
+};
 
+const onBlur = () => {
+    updateStyles('rgb(20, 20, 20)', 'rgb(38, 38, 38)');
+    timerStore.update(s => ({ ...s, annoyingLevel: 'high' }));
+};
 
-async function getContentSize() {
+const onFocus = () => {
+    updateStyles('rgb(38, 38, 38)', 'rgb(56, 56, 56)');
+    timerStore.update(s => ({ ...s, annoyingLevel: 'low' }));
+    stopAnnoyingBehavior();
+};
+
+const getContentSize = async () => {
     const mainElement = document.querySelector('main');
     if (!mainElement) return { width: 300, height: 200 }; // fallback size
 
     const rect = mainElement.getBoundingClientRect();
-    const outerSize = await getCurrentWindow().outerSize();
-    const innerSize = await getCurrentWindow().innerSize();
-    let titleBarHeight = outerSize.height - innerSize.height;
-    if (titleBarHeight === 0) {
-        titleBarHeight = 30;
-    }
+    const { height: outerHeight } = await getCurrentWindow().outerSize();
+    const { height: innerHeight } = await getCurrentWindow().innerSize();
+    const titleBarHeight = Math.max(outerHeight - innerHeight, 30);
 
     return {
         width: Math.ceil(rect.width),
         height: Math.ceil(rect.height) + titleBarHeight
     };
-}
+};
 
-let resizeTimeout;
-
-function debounceResize(func, wait) {
-    return (...args) => {
-        clearTimeout(resizeTimeout);
-        resizeTimeout = setTimeout(() => func.apply(this, args), wait);
+const debounce = (/** @type {{ (): Promise<void>; apply?: any; }} */ func, /** @type {number} */ wait) => {
+    let timeout;
+    return (/** @type {any} */ ...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), wait);
     };
-}
+};
 
-const resizeWindow = debounceResize(async () => {
-    const { width, height } = await getContentSize();
-    await getCurrentWindow().setSize(new LogicalSize(width, height));
+const resizeWindow = debounce(async () => {
+    // Get previous window size
+    const { width: prevWidth, height: prevHeight } = await getCurrentWindow().innerSize();
+    // Get new content size
+    const size = await getContentSize();
+    const buffer = 10;
+    // If the new size is the same as the previous size+-buffer, don't resize
+    if (size.width >= prevWidth - buffer && size.width <= prevWidth + buffer &&
+        size.height >= prevHeight - buffer && size.height <= prevHeight + buffer) {
+        return;
+    }
+
+    await getCurrentWindow().setSize(new LogicalSize(size.width, size.height));
 }, 50);
+
+const setRandomPosition = async () => {
+    // get the screen size of the display the window is on
+    const screenWidth = 2160;
+    const screenHeight = 1080;
+    const x = Math.floor(Math.random() * screenWidth);
+    const y = Math.floor(Math.random() * screenHeight);
+    await getCurrentWindow().setPosition(new LogicalPosition(x, y));
+};
+
+const setRandomSize = async () => {
+    const baseWidth = 300;
+    const baseHeight = 200;
+    const randomWidth = baseWidth + Math.floor(Math.random() * 100);
+    const randomHeight = baseHeight + Math.floor(Math.random() * 100);
+    await getCurrentWindow().setSize(new LogicalSize(randomWidth, randomHeight));
+};
 
 afterUpdate(resizeWindow);
 
+const loadConfig = async () => {
+    try {
+        const config = await invoke('fetch_config').then(JSON.parse);
+        timerStore.updateConfig({
+            workDuration: config.work_duration * 60,
+            shortBreakDuration: config.short_break_duration * 60,
+            longBreakDuration: config.long_break_duration * 60,
+            annoyingLevel: config.annoying_level,
+            sessionsBeforeLongBreak: config.sessions_before_long_break,
+            theme: config.theme
+        });
+    } catch (error) {
+        console.error('Error loading config:', error);
+    }
+};
+
 onMount(async () => {
-    // Initial resize
+    await loadConfig();
+
+    // set to blinking until the status changes
+    timerStore.update(s => ({ ...s, annoyingLevel: 'high' }));
+
     resizeWindow();
 });
 
-onDestroy(async () => {
+onDestroy(() => {
+    if (intervalId) clearInterval(intervalId);
+    if (randomPositionIntervalId) clearInterval(randomPositionIntervalId);
 });
 
 listen('on_blur', onBlur);
@@ -331,34 +377,33 @@ listen('on_focus', onFocus);
 
 </script>
 
-<main class="container">
-    <!-- <div class="frontmost-application-name-container"> -->
-    <!--     <div class="frontmost-application-name"> -->
-    <!--         {$frontmostApp} -->
-    <!--     </div> -->
-    <!-- </div> -->
-    <!-- <h1>{$displayTime}</h1> -->
-    <!-- <div class="timer-container"> -->
-    <!-- <span class="session-type">{$sessionType}</span> -->
-    <!-- </div> -->
+<main class="container"
+    class:blinking={$isBlinking}
+    style="
+    --background-color: {backgroundColor};
+    --background-color-light: {backgroundColorLight};
+    --blink-color: rgb(255, 0, 0);
+    "
+>
     <div class="timer-container">
         <h1>{$displayTime}</h1>
     </div>
     <div class="progress-container">
-        <div class="progress-bar" class:blink={$timerStatus === 'stopped' || $timerStatus === 'paused'} style="transform: scaleX({$progress / $totalTime}); background-color: {$progressColor};"></div>
-        <span class="progress-label">{$frontmostApp}</span>
+        <div class="progress-bar"
+             style="transform: scaleX({$progress / $totalTime}); background-color: {$progressColor};">
+        </div>
+        <span class="progress-label">{$timerStore.frontmostApp}</span>
     </div>
-
-
     <div class="buttons-container">
         <button on:pointerdown={onPointerDown}>
-            { $timerStatus === 'stopped' ? START_LABEL : $timerStatus === 'paused' ? RESUME_LABEL : PAUSE_LABEL }
+            {$timerStore.status === TIMER_STATUS.STOPPED ? LABELS.START :
+              $timerStore.status === TIMER_STATUS.PAUSED ? LABELS.RESUME : LABELS.PAUSE}
         </button>
         <button on:pointerdown={onPointerDown}>
-            { $sessionType === 'work' ? STOP_LABEL : SKIP_BREAK_LABEL }
+            {$timerStore.sessionType === SESSION_TYPES.WORK ? LABELS.STOP : LABELS.SKIP_BREAK}
         </button>
         <button on:pointerdown={onPointerDown}>
-            { LOG_LABEL }
+            {LABELS.LOG}
         </button>
     </div>
 </main>
@@ -372,25 +417,10 @@ listen('on_focus', onFocus);
 :global(body) {
     overflow: hidden;
 }
+
 main {
     padding: 16px;
     padding-top: 0;
-}
-
-.session-type {
-    font-size: 12px;
-    color: #fffffbaa;
-    font-family: "San Francisco Display", sans-serif;
-    align-self: flex-end;
-}
-
-@keyframes blink {
-    0%, 100% { opacity: 0; }
-    50% { opacity: 1; }
-}
-
-.blink {
-    animation: blink 2s step-end infinite;
 }
 
 .container {
@@ -398,10 +428,15 @@ main {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-
     width: fit-content;
     height: fit-content;
+    border-radius: 8px;
 }
+
+.container:hover {
+    background-color: rgb(38, 38, 38);
+}
+
 .timer-container {
     display: flex;
     flex-direction: column;
@@ -436,7 +471,6 @@ h1 {
     height: 100%;
     background-color: var(--progress-color, rgb(255, 89, 0));
     transform-origin: left;
-    transition: transform 0.1s linear;
     border-radius: 2px;
 }
 
@@ -455,9 +489,6 @@ h1 {
     z-index: 1;
 }
 
-.blink .progress-bar {
-    animation: blink 2s step-end infinite;
-}
 .buttons-container {
     display: flex;
     margin-top: 5px;
@@ -479,6 +510,19 @@ button {
     justify-content: center;
 }
 button:hover {
-    background-color: hsla(0, 0%, 100%, 0.2);
+    background-color: rgb(38, 38, 38);
+    color: white;
+}
+@keyframes blink {
+    0%, 100% { background-color: var(--background-color); }
+    50% { background-color: var(--blink-color); }
+}
+
+.blinking {
+    animation: blink 1s infinite;
+}
+
+.container {
+    background-color: var(--background-color);
 }
 </style>

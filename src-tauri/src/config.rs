@@ -1,13 +1,103 @@
 use crate::notify_on_error;
 use lazy_static::lazy_static;
+use serde::{Deserialize, Serialize};
+use serde_yaml;
 use std::env;
 // use std::fs::{read, read_to_string};
 use std::path::PathBuf;
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub enum AnnoyingLevel {
+    None,
+    #[serde(alias = "low")]
+    Low,
+    #[serde(alias = "medium")]
+    Medium,
+    #[serde(alias = "high")]
+    High,
+}
+
+impl Default for AnnoyingLevel {
+    fn default() -> Self {
+        AnnoyingLevel::None
+    }
+}
+
+// We will use yaml for configuration
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct Config {
+    pub short_break_duration: Option<u64>,
+    pub long_break_duration: Option<u64>,
+    pub work_duration: Option<u64>,
+    pub theme: Option<String>, // TODO: Use an enum
+    pub work_sound: Option<String>,
+    pub break_sound: Option<String>,
+    pub annoying_level: Option<AnnoyingLevel>,
+    pub sessions_long_break: Option<u64>,
+}
+
+impl Config {
+    pub fn short_break_duration(&self) -> u64 {
+        self.short_break_duration.unwrap_or(5)
+    }
+
+    pub fn long_break_duration(&self) -> u64 {
+        self.long_break_duration.unwrap_or(15)
+    }
+
+    pub fn sessions_long_break(&self) -> u64 {
+        self.sessions_long_break.unwrap_or(4)
+    }
+
+    pub fn work_duration(&self) -> u64 {
+        self.work_duration.unwrap_or(25)
+    }
+
+    pub fn theme(&self) -> &str {
+        self.theme.as_deref().unwrap_or("default")
+    }
+
+    pub fn work_sound(&self) -> &str {
+        self.work_sound.as_deref().unwrap_or("default")
+    }
+
+    pub fn break_sound(&self) -> &str {
+        self.break_sound.as_deref().unwrap_or("default")
+    }
+
+    pub fn annoying_level(&self) -> AnnoyingLevel {
+        self.annoying_level.unwrap_or_default()
+    }
+
+    pub fn should_blink_background(&self) -> bool {
+        self.annoying_level() == AnnoyingLevel::High
+    }
+
+    pub fn load() -> Self {
+        let config_file = CONFIG_DIRS[0].join("config.yaml");
+        if !config_file.exists() {
+            let config = Config::default();
+            config.save();
+            return config;
+        }
+
+        let config_str = std::fs::read_to_string(config_file).unwrap();
+        let config: Config = serde_yaml::from_str(&config_str).unwrap();
+        config
+    }
+
+    pub fn save(&self) {
+        let config_file = CONFIG_DIRS[0].join("config.yaml");
+        let config_str = serde_yaml::to_string(&self).unwrap();
+        std::fs::write(config_file, config_str).unwrap();
+    }
+}
 
 // const THEMES_DIR: &str = "themes";
 
 lazy_static! {
     // static ref KEY_COMBO: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    pub static ref CONFIG: Config = Config::load();
     pub static ref HOME_DIR: PathBuf = home_dir().unwrap();
     pub static ref CONFIG_DIRS: Vec<PathBuf> = config_dirs();
     pub static ref APP_NAME: String = env!("CARGO_PKG_NAME").to_string();
