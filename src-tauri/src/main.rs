@@ -148,6 +148,11 @@ impl Stopwatch {
         self.paused_duration = Duration::new(0, 0);
     }
 }
+#[tauri::command]
+fn fetch_config() -> String {
+    let json = serde_json::to_string(&config::Config::load()).unwrap();
+    json
+}
 
 #[tauri::command]
 fn start_timer(stopwatch: tauri::State<Mutex<Stopwatch>>) {
@@ -439,6 +444,7 @@ pub fn main() {
             on_focus,
             on_blur,
             on_log,
+            fetch_config,
             get_frontmost_application,
         ])
         .on_window_event(|window, event| {
