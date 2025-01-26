@@ -86,20 +86,18 @@ const isBlinking = derived(timerStore, $store => {
     return (status === TIMER_STATUS.STOPPED || status === TIMER_STATUS.PAUSED) && annoyingLevel === 'high';
 });
 
-$: if ($isBlinking) {
-    triggerAnnoyingBehavior();
-}
-
 $: backgroundColor = $timerStore.theme === 'dark' ? 'rgb(20, 20, 20)' : 'rgb(38, 38, 38)';
 $: backgroundColorLight = $timerStore.theme === 'dark' ? 'rgb(38, 38, 38)' : 'rgb(56, 56, 56)';
 
-const totalTime = derived(timerStore, $store => {
+const totalTime = derived(timerStore, ($store, set) => {
+    let value;
     switch($store.sessionType) {
-        case SESSION_TYPES.WORK: return $store.workDuration;
-        case SESSION_TYPES.SHORT_BREAK: return $store.shortBreakDuration;
-        case SESSION_TYPES.LONG_BREAK: return $store.longBreakDuration;
+        case SESSION_TYPES.WORK: value = $store.workDuration; break;
+        case SESSION_TYPES.SHORT_BREAK: value = $store.shortBreakDuration; break;
+        case SESSION_TYPES.LONG_BREAK: value = $store.longBreakDuration; break;
     }
-});
+    if (value !== undefined) set(value);
+}, undefined);
 
 const progress = derived(timerStore, $store => $store.remainingTime);
 
@@ -174,7 +172,7 @@ const startTimer = () => {
             onStop();
         }
     }, 1000);
-    timerStore.setStatus(TIMER_STATUS.RUNNING);
+    timerStore.update(s => ({ ...s, status: TIMER_STATUS.RUNNING, annoyingLevel: 'low' }));
 };
 
 const stopAnnoyingBehavior = () => {
@@ -252,8 +250,9 @@ const onResume = async () => {
 };
 
 const onPointerDown = (/** @type {{ target: any; }} */ event) => {
-    const button = event.target;
+    const button = event.target.closest('button');
     if (!button) return;
+    const action = button.dataset.action;
     const actionMap = {
         [LABELS.START]: onStart,
         [LABELS.PAUSE]: onPause,
@@ -262,16 +261,12 @@ const onPointerDown = (/** @type {{ target: any; }} */ event) => {
         [LABELS.LOG]: onLog,
         [LABELS.SKIP_BREAK]: onSkipBreak
     };
-    const action = actionMap[button.textContent];
-    if (action) action();
+    if (actionMap[action]) actionMap[action]();
 };
 
 const updateStyles = (/** @type {string} */ bodyColor, /** @type {string} */ buttonColor) => {
-    // document.body.style.backgroundColor = bodyColor;
-    document.querySelector('main').style.backgroundColor = bodyColor;
-    document.querySelectorAll('button').forEach(button => {
-        if (button) button.style.backgroundColor = buttonColor;
-    });
+    document.documentElement.style.setProperty('--body-color', bodyColor);
+    document.documentElement.style.setProperty('--button-color', buttonColor);
 };
 
 const onBlur = () => {
@@ -309,19 +304,16 @@ const debounce = (/** @type {{ (): Promise<void>; apply?: any; }} */ func, /** @
 };
 
 const resizeWindow = debounce(async () => {
-    // Get previous window size
     const { width: prevWidth, height: prevHeight } = await getCurrentWindow().innerSize();
-    // Get new content size
     const size = await getContentSize();
     const buffer = 10;
-    // If the new size is the same as the previous size+-buffer, don't resize
-    if (size.width >= prevWidth - buffer && size.width <= prevWidth + buffer &&
-        size.height >= prevHeight - buffer && size.height <= prevHeight + buffer) {
-        return;
-    }
+    const widthDiff = Math.abs(size.width - prevWidth);
+    const heightDiff = Math.abs(size.height - prevHeight);
 
-    await getCurrentWindow().setSize(new LogicalSize(size.width, size.height));
-}, 50);
+    if (widthDiff > buffer || heightDiff > buffer) {
+        await getCurrentWindow().setSize(new LogicalSize(size.width, size.height));
+    }
+}, 100);
 
 const setRandomPosition = async () => {
     // get the screen size of the display the window is on
@@ -345,13 +337,15 @@ afterUpdate(resizeWindow);
 const loadConfig = async () => {
     try {
         const config = await invoke('fetch_config').then(JSON.parse);
+        const workDuration = config.work_duration * 60;
         timerStore.updateConfig({
-            workDuration: config.work_duration * 60,
+            workDuration,
             shortBreakDuration: config.short_break_duration * 60,
             longBreakDuration: config.long_break_duration * 60,
             annoyingLevel: config.annoying_level,
             sessionsBeforeLongBreak: config.sessions_before_long_break,
-            theme: config.theme
+            theme: config.theme,
+            remainingTime: workDuration // Set initial remaining time
         });
     } catch (error) {
         console.error('Error loading config:', error);
@@ -362,7 +356,7 @@ onMount(async () => {
     await loadConfig();
 
     // set to blinking until the status changes
-    timerStore.update(s => ({ ...s, annoyingLevel: 'high' }));
+    timerStore.update(s => ({ ...s, annoyingLevel: 'high', sessionType: SESSION_TYPES.WORK }));
 
     resizeWindow();
 });
@@ -382,7 +376,7 @@ listen('on_focus', onFocus);
     style="
     --background-color: {backgroundColor};
     --background-color-light: {backgroundColorLight};
-    --blink-color: rgb(255, 0, 0);
+
     "
 >
     <div class="timer-container">
@@ -394,135 +388,141 @@ listen('on_focus', onFocus);
         </div>
         <span class="progress-label">{$timerStore.frontmostApp}</span>
     </div>
-    <div class="buttons-container">
-        <button on:pointerdown={onPointerDown}>
+    <div class="buttons-container" on:pointerdown={onPointerDown}>
+        <button data-action={$timerStore.status === TIMER_STATUS.STOPPED ? LABELS.START :
+              $timerStore.status === TIMER_STATUS.PAUSED ? LABELS.RESUME : LABELS.PAUSE}>
             {$timerStore.status === TIMER_STATUS.STOPPED ? LABELS.START :
               $timerStore.status === TIMER_STATUS.PAUSED ? LABELS.RESUME : LABELS.PAUSE}
         </button>
-        <button on:pointerdown={onPointerDown}>
+        <button data-action={$timerStore.sessionType === SESSION_TYPES.WORK ? LABELS.STOP : LABELS.SKIP_BREAK}>
             {$timerStore.sessionType === SESSION_TYPES.WORK ? LABELS.STOP : LABELS.SKIP_BREAK}
         </button>
-        <button on:pointerdown={onPointerDown}>
+        <button data-action={LABELS.LOG}>
             {LABELS.LOG}
         </button>
     </div>
 </main>
 
 <style>
-:global(*) {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-:global(body) {
-    overflow: hidden;
+:global(:root) {
+  --font-family: "San Francisco Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+  --background-color: rgb(38, 38, 38);
+  --background-color-light: rgb(56, 56, 56);
+  --text-color: rgba(255, 255, 255, 0.8);
+  --progress-color: rgb(255, 89, 0);
+  --blink-color: rgb(255, 0, 0);
+  --border-radius: 8px;
+  --button-padding: 5px 10px;
+  --spacing-small: 5px;
+  --spacing-medium: 16px;
 }
 
-main {
-    padding: 16px;
-    padding-top: 0;
+:global(*) {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:global(body) {
+  overflow: hidden;
+  font-family: var(--font-family);
+  color: var(--text-color);
+  background-color: var(--background-color);
 }
 
 .container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    width: fit-content;
-    height: fit-content;
-    border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  height: fit-content;
+  padding: var(--spacing-medium);
+  padding-top: 0;
+  border-radius: var(--border-radius);
+  background-color: var(--background-color);
+  transition: background-color 0.3s ease;
 }
 
 .container:hover {
-    background-color: rgb(38, 38, 38);
+  background-color: var(--background-color-light);
 }
 
 .timer-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
 }
-h1 {
-    display: flex;
-    font-size: 2.6em;
-    font-family: "San Francisco Display", sans-serif;
-    margin-block-start: 0;
-    margin-block-end: 0;
-    margin-inline-start: 0;
-    margin-inline-end: 0;
-    margin-top: 5px;
-    font-weight: bold;
+
+.timer-container h1 {
+  font-size: 2.6em;
+  font-weight: bold;
+  margin: var(--spacing-small) 0;
 }
+
 .progress-container {
-    position: relative;
-    width: 100%;
-    height: 1em;
-    border-radius: 4px;
-    overflow: hidden;
-    padding: 2px;
-    border: 1px solid var(--progress-color, rgb(255, 89, 0));
+  position: relative;
+  width: 100%;
+  height: 1em;
+  border-radius: calc(var(--border-radius) / 2);
+  overflow: hidden;
+  padding: 2px;
+  border: 1px solid var(--progress-color);
 }
 
 .progress-bar {
-    width: 100%;
-    height: 100%;
-    background-color: var(--progress-color, rgb(255, 89, 0));
-    transform-origin: left;
-    border-radius: 2px;
+  width: 100%;
+  height: 100%;
+  background-color: var(--progress-color);
+  transform-origin: left;
+  border-radius: 2px;
+  transition: transform 0.3s ease;
 }
 
 .progress-label {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.8);
-    font-family: "San Francisco Display", sans-serif;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 90%;
-    z-index: 1;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 90%;
+  z-index: 1;
 }
 
 .buttons-container {
-    display: flex;
-    margin-top: 5px;
-    flex-direction: row;
-    justify-content: space-between;
-    width: 100%;
-    gap: 5px;
+  display: flex;
+  margin-top: var(--spacing-small);
+  width: 100%;
+  gap: var(--spacing-small);
 }
-button {
-    flex: 1;
-    padding: 5px 10px;
-    border-radius: 5px;
-    border: none;
-    background-color: rgb(56, 56, 56);
-    font-size: 12px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+
+.buttons-container button {
+  flex: 1;
+  padding: var(--button-padding);
+  border-radius: calc(var(--border-radius) / 2);
+  border: none;
+  background-color: var(--background-color-light);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
-button:hover {
-    background-color: rgb(38, 38, 38);
-    color: white;
+
+.buttons-container button:hover {
+  background-color: var(--background-color);
+  color: white;
 }
+
 @keyframes blink {
-    0%, 100% { background-color: var(--background-color); }
-    50% { background-color: var(--blink-color); }
+  0%, 100% { background-color: var(--background-color); }
+  50% { background-color: var(--blink-color); }
 }
 
 .blinking {
-    animation: blink 1s infinite;
-}
-
-.container {
-    background-color: var(--background-color);
+  animation: blink 1s infinite;
 }
 </style>
