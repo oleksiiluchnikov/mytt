@@ -1,10 +1,10 @@
 import { writable } from 'svelte/store';
-import type { FlowState } from '../types';
+import type { FlowStatus } from '../types';
 
 export interface SessionRecord {
     startTime: Date;
     duration: number;
-    focusRating: FlowState;
+    focusRating: FlowStatus;
     breakTaken: boolean;
     breakDuration?: number;
 }

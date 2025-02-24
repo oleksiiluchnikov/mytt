@@ -1,43 +1,93 @@
-export type TimerStatus = 'running' | 'paused' | 'stopped';
-export type SessionType = 'work' | 'shortBreak' | 'longBreak';
-export type AnnoyingLevel = 'low' | 'medium' | 'high';
+// Basic Types
 export type Theme = 'light' | 'dark';
-export type FlowState = 'distracted' | 'ok' | 'focused' | 'flow';
-export type SessionGrowth = 'decrease' | 'maintain' | 'increase';
-export type BreakType = 'optional' | 'suggested' | 'required';
+export type AnnoyingLevel = 'low' | 'medium' | 'high';
+
+// Time and Progress Types
+export interface TimeState {
+    total: number;
+    remaining: number;
+    display: string;
+}
+
+export interface ProgressState {
+    total: number;
+    percentage: number;
+    color: string;
+}
+
+// Timer Related Types
+export type TimerStatus = 'running' | 'paused' | 'stopped';
 
 export interface TimerStoreState {
+    time: TimeState;
+    progress: ProgressState;
     status: TimerStatus;
-    sessionType: SessionType;
-    remainingTime: number;
-    showFlowPrompt: boolean;
-    focusRating: FlowState | null;
-    focusRatingHistory: FlowState[];
-    focusDurations: number[];
-    currentFocusDuration: number;
+    preferences: TimerPreferences;
+    system: SystemState;
+    ui: UIState;
+}
+
+export interface TimerPreferences {
     workDuration: number;
     shortBreakDuration: number;
     longBreakDuration: number;
     sessionsBeforeLongBreak: number;
-    annoyingLevel: AnnoyingLevel;
-    completedSessions: number;
-    frontmostApp: string;
-    currentFlowState?: FlowState;
-    lastSessionDuration?: number;
-    isFlowMode: boolean;
-    suggestedNextDuration?: number;
     minimumDuration: number;
     maximumDuration: number;
-    // New fields for Progressive Pomodoro
-    sessionGrowth?: SessionGrowth;
-    breakType?: BreakType;
-    flowStreak: number;
-    averageFocusLevel: number;
-    lastFocusRatings: FlowState[];
-    dailyFlowSessions: number;
-    dailyFlowGoal: number;
+    annoyingLevel: AnnoyingLevel;
 }
 
-export interface UIStore {
+export interface FlowPromptState {
+    isActive: boolean;
+}
+
+// Flow and Focus Related Types
+export type FlowStatus = 'distracted' | 'ok' | 'focused' | 'flow';
+
+export interface FlowState {
+    rating: FlowStatus | null;
+    ratingHistory: FlowStatus[];
+    status?: FlowStatus;
+    streak: number;
+    averageFocusLevel: number;
+    lastFocusRatings: FlowStatus[];
+    dailyFlowSessions: number;
+    dailyFlowGoal: number;
+    isActive: boolean;
+    prompt: FlowPromptState;
+}
+
+export interface FocusState {
+    level: FlowStatus;
+    durations: number[];
+    current: number;
+}
+
+// Session and Break Related Types
+export type SessionType = 'work' | 'shortBreak' | 'longBreak';
+export type SessionGrowth = 'decrease' | 'maintain' | 'increase';
+export type BreakType = 'optional' | 'suggested' | 'required';
+
+export interface SessionState {
+    type: SessionType;
+    completed: number;
+    lastSessionDuration?: number;
+    suggestedNextDuration?: number;
+    sessionGrowth?: SessionGrowth;
+}
+
+export interface BreakState {
+    type: BreakType;
+    skipped?: boolean;
+    duration?: number;
+}
+
+// System and UI Related Types
+export interface SystemState {
+    frontmostApp: string;
+    showFlowPrompt: boolean;
+}
+
+export interface UIState {
     theme: Theme;
 }
