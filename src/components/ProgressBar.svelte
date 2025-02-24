@@ -1,61 +1,109 @@
 <script lang="ts">
-import { timer } from '../stores/timer';
-import { progress } from '../stores/timerDerived';
-import { FLOW_THRESHOLDS } from '../constants';
+    import { timerStore } from '../stores/timer';
+    import { sessionStore } from '../stores/session';
+    import { flowStore } from '../stores/flow';
+    import { TIMER_STATUS, FLOW_STATUS } from '../constants';
+    import * as utils from '../utils/time';
 
-export let status: string;
-export let progressColor: string;
-export let frontmostApp: string;
+    let progressBarId = `progress-bar-${Math.random().toString(36).substr(2, 9)}`;
 
-$: isFlowMode = $timer.isFlowMode;
-$: isRunning = status === 'running';
-$: progressPercentage = 100 - ($progress.percentage || 0);
+    function handleSliderChange(event: Event) {
+        const target = event.target as HTMLInputElement;
+        const sliderValue = parseInt(target.value, 10);
 
-function handleSliderChange(event: Event) {
-    const target = event.target as HTMLInputElement;
-    const value = 100 - parseInt(target.value, 10);
-    const total = $progress.total;
-    const remaining = Math.round((total * value) / 100);
-    timer.setRemainingTime(remaining);
-}
+        if ($timerStore.status === TIMER_STATUS.STOPPED) {
+            const maxDuration = $timerStore.preferences.maximumDuration;
+            const minDuration = $timerStore.preferences.minimumDuration;
+            const range = maxDuration - minDuration;
+            const newDuration = Math.round(minDuration + (range * sliderValue / 100));
+            updateStoppedTimer(newDuration);
+        } else {
+            updateRunningTimer(sliderValue);
+        }
+    }
+
+    function updateStoppedTimer(newDuration: number) {
+        const maxDuration = $timerStore.preferences.maximumDuration;
+        const minDuration = $timerStore.preferences.minimumDuration;
+        const percentage = ((newDuration - minDuration) / (maxDuration - minDuration)) * 100;
+
+        timerStore.update(s => ({
+            ...s,
+            time: {
+                total: newDuration,
+                remaining: newDuration,
+                display: utils.formatTime(newDuration)
+            },
+            progress: {
+                ...s.progress,
+                total: newDuration,
+                percentage: Math.max(0, Math.min(100, percentage))
+            }
+        }));
+
+        sessionStore.set({
+            ...sessionStore.state,
+            lastSessionDuration: newDuration,
+            suggestedNextDuration: newDuration
+        });
+    }
+
+    function updateRunningTimer(percentage: number) {
+        const total = $timerStore.time.total;
+        const remaining = Math.round((total * percentage) / 100);
+
+        timerStore.update(s => ({
+            ...s,
+            time: {
+                ...s.time,
+                remaining,
+                display: utils.formatTime(remaining)
+            },
+            progress: {
+                ...s.progress,
+                percentage: Math.max(0, Math.min(100, percentage))
+            }
+        }));
+    }
 </script>
 
-<div class="progress-container"
-     class:running={isRunning}
-     class:flow={isFlowMode}
-     class:flow-streak={$timer.flowStreak >= FLOW_THRESHOLDS.FLOW_STREAK_THRESHOLD}>
-    <div class="progress-background"></div>
-    <div class="progress-bar"
-             style:width="{100 - progressPercentage}%"
-             style:background-color={progressColor}
-             style:transform="translateZ(0)">
-        {#if $timer.flowStreak > 0}
-            <div class="flow-indicator">
-                Flow streak: {$timer.flowStreak}
-            </div>
-        {/if}
+<div
+    class="progress-container"
+    class:running={$timerStore.status === TIMER_STATUS.RUNNING}
+    class:flow={$flowStore.status === FLOW_STATUS.FLOW}
+    role="progressbar"
+    aria-valuemin="0"
+    aria-valuemax="100"
+    aria-valuenow={$timerStore.progress.percentage}
+    aria-label="Timer progress"
+>
+    <div class="progress-background" aria-hidden="true"></div>
+    <div
+        class="progress-bar"
+    style:width="{$timerStore.progress.percentage}%"
+    >
     </div>
-    {#if !isRunning}
+    {#if $timerStore.status !== TIMER_STATUS.RUNNING}
         <input
             type="range"
             class="time-slider"
             min="0"
             max="100"
-            value={progressPercentage}
+    value={$timerStore.progress.percentage}
             on:input={handleSliderChange}
+            aria-labelledby={progressBarId}
         />
     {/if}
-    <span class="progress-label">{frontmostApp}</span>
 </div>
 
 <style>
     .progress-container {
         position: relative;
         width: 100%;
-        height: 20px;
+        height: var(--progress-height);
         border-radius: calc(var(--border-radius) / 2);
         overflow: hidden;
-        background-color: var(--background-color-light);
+        transition: background-color 0.3s ease;
     }
 
     .progress-container:not(.running) {
@@ -64,94 +112,49 @@ function handleSliderChange(event: Event) {
 
     .progress-background {
         position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background-color: rgba(255, 255, 255, 0.1);
+        inset: 0;
+        background-color: var(--background-color-blur);
+        opacity: 0.75;
     }
+
     .progress-bar {
         position: absolute;
-        top: 0;
-        left: 0;
-        height: 100%;
+        inset: 0 auto 0 0;
         background-color: var(--progress-color);
-        will-change: width;
-        transform: translateZ(0);
-        transition: width 0.1s linear;
-        backface-visibility: hidden;
+        transform-origin: left;
     }
 
     .time-slider {
         position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
+        inset: 0;
         margin: 0;
         opacity: 0;
         cursor: pointer;
         z-index: 3;
     }
 
-    .progress-label {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        font-size: 12px;
-        color: var(--text-color);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        max-width: 90%;
-        z-index: 2;
-        pointer-events: none;
-        user-select: none;
+    /* Interactions */
+    @media (hover: hover) {
+        .progress-container:hover .progress-bar {
+            filter: brightness(1.1);
+            opacity: 0.9;
+        }
+
+        .progress-container:active .progress-bar {
+            filter: brightness(0.9);
+        }
     }
 
-    .flow .progress-bar {
-        background-color: var(--flow-color, #4CAF50) !important;
+    /* Accessibility */
+    .time-slider:focus-visible {
+        outline: 2px solid var(--focus-color, #007bff);
+        outline-offset: 2px;
     }
 
-    /* Hover effects */
-    .progress-container:hover .progress-bar {
-        filter: brightness(1.1);
-    }
-
-    .progress-container:active .progress-bar {
-        filter: brightness(0.9);
-    }
-
-    .progress-container:hover .progress-bar {
-        opacity: 0.9;
-    }
-
-    .flow .progress-bar {
-        background-color: var(--flow-color, #4CAF50) !important;
-    }
-    .progress-container:hover .progress-bar {
-        opacity: 0.9;
-    }
-
+    /* Animation optimizations */
     .progress-bar {
-        width: 100%;
-        height: 100%;
-        background-color: var(--progress-color);
-        transform-origin: left;
-        border-radius: 2px;
-    }
-
-    .progress-label {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        font-size: 12px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        max-width: 90%;
-        z-index: 1;
+        backface-visibility: hidden;
+        perspective: 1000px;
+        transform: translateZ(0);
     }
 </style>

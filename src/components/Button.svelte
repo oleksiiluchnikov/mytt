@@ -20,27 +20,39 @@ button {
     border: none;
     background-color: var(--background-color-light);
     cursor: pointer;
-    transition: background-color 0.3s ease, color 0.3s ease;
     display: inline-flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 4px;
-    min-width: 90px;
-    height: 44px;
-    height: 100%;
+    height: fit-content;
     white-space: normal;
     text-align: center;
     white-space: nowrap;
 }
 
 button:hover {
-    background-color: var(--background-color);
+    background-color: var(--background-color-blur);
     color: white;
 }
 
+button:focus {
+    background-color: var(--background-color-blur);
+    color: white;
+    outline: none;
+}
+
+button:focus-visible {
+    outline: 2px solid var(--accent-color, #4a9eff);
+    outline-offset: 2px;
+}
+
+button:active {
+    background-color: var(--background-color-dark, #1a1a1a);
+}
+
 .label {
-    font-size: 12px;
+    font-size: var(--font-size-small);
     font-weight: 500;
 }
 

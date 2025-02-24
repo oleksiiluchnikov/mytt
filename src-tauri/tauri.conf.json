@@ -31,9 +31,9 @@
         "decorations": true,
         "hiddenTitle": true,
         "acceptFirstMouse": true,
-        "width": 240,
-        "minWidth": 240,
-        "resizable": true,
+        "width": 160,
+        "minWidth": 160,
+        "resizable": false,
         "useHttpsScheme": true
       }
     ],

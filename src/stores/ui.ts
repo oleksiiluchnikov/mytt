@@ -1,7 +1,7 @@
 import { writable } from 'svelte/store';
-import type { UIStore } from '../types/index';
+import type { UIState } from '../types/index';
 
-export const uiStore = writable<UIStore>({
+export const uiStore = writable<UIState>({
     theme: 'dark'
 });
 
