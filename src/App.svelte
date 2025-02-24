@@ -5,62 +5,54 @@ import { configStore } from './stores/config';
 import ButtonGroup from './components/ButtonGroup.svelte';
 import ProgressBar from './components/ProgressBar.svelte';
 import FocusStats from './components/FocusStats.svelte';
-import { timer } from './stores/timer';
-import { progress, progressColor } from './stores/timerDerived';
+import { timerStore } from './stores/timer';
+import { sessionStore } from './stores/session';
+import { flowStore } from './stores/flow';
 import { resizeWindow } from './utils/window';
 
-
 const onBlur = () => {
-    timer.setAnnoyingLevel('high');
+    document.body.style.backgroundColor = 'var(--background-color-blur)';
 };
 
 const onFocus = () => {
-    timer.setAnnoyingLevel('low');
+    document.body.style.backgroundColor = 'var(--background-color-focus)';
 };
+
+let unsubscribers: Array<() => void> = [];
+
 onMount(async () => {
     await configStore.load();
-    const unlistenEvents = await Promise.all([
-        listen('on_blur', onBlur),
-        listen('on_focus', onFocus)
-    ]);
+    onBlur();
 
-    const annoyInterval = setInterval(() => {
-        timer.setAnnoyingLevel('high');
-        setTimeout(() => timer.setAnnoyingLevel('low'), 500);
-    }, 5000);
+    listen('on_blur', onBlur);
+    listen('on_focus', onFocus);
 
-    // Create ResizeObserver to watch for content changes
-    const resizeObserver = new ResizeObserver(async () => {
-        await resizeWindow();
-    });
+    // Subscribe to store changes that should trigger resize
+    unsubscribers = [
+        flowStore.subscribe(() => resizeWindow()),
+        sessionStore.subscribe(() => resizeWindow())
+    ];
 
-    // Observe the main content container
-    const mainElement = document.querySelector('main');
-    if (mainElement) {
-        resizeObserver.observe(mainElement);
-    }
-
-    onDestroy(() => {
-        unlistenEvents.forEach(unsubscribe => unsubscribe());
-        clearInterval(annoyInterval);
-        resizeObserver.disconnect();
-        timer.update(s => ({ ...s, annoyingLevel: 'low' }));
-    });
+    // Initial resize
+    resizeWindow();
 });
+
+onDestroy(() => {
+    // Cleanup subscriptions
+    unsubscribers.forEach(unsubscribe => unsubscribe());
+});
+
 </script>
 
 <main class="container"
-    class:blinking={$timer.status !== 'running' && $timer.annoyingLevel === 'high'}>
+    class:blinking={($timerStore.status === 'paused' || $timerStore.status === 'stopped') && $configStore.behavior.annoyingLevel === 'high'}
+>
     <div class="content">
         <div class="top-section">
             <FocusStats />
         </div>
         <div class="middle-section">
-            <ProgressBar
-                status={$timer.status}
-                progressColor={$progressColor}
-                frontmostApp={$timer.frontmostApp}
-            />
+            <ProgressBar/>
         </div>
         <div class="bottom-section">
             <ButtonGroup/>
@@ -71,16 +63,23 @@ onMount(async () => {
 <style>
 :global(:root) {
     --font-family: "San Francisco Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+    --font-size-small: 12px;
     --background-color: rgb(38, 38, 38);
     --background-color-light: rgb(56, 56, 56);
+    --background-color-blur: rgba(20, 20, 20, 1.00);
+    --background-color-focus: rgba(38, 38, 38, 1.00);
     --text-color: rgba(255, 255, 255, 0.8);
     --progress-color: rgb(255, 89, 0);
+    --progress-height: var(--font-size-small);
+    --progress-background-color: rgb(56, 56, 56);
     --blink-color: rgb(255, 0, 0);
     --border-radius: 8px;
     --button-padding: 5px 10px;
     --spacing-small: 5px;
     --spacing-medium: 16px;
-    --window-width: 240px;
+    --window-width: 160px;
+    --session-info-height: var(--font-size-small);
+    --break-text-color: rgb(0, 255, 0);
 }
 
 :global(*) {
@@ -93,19 +92,9 @@ onMount(async () => {
     overflow: hidden;
     font-family: var(--font-family);
     color: var(--text-color);
-    background-color: var(--background-color);
     height: var(--window-height);
     width: var(--window-width);
-}
-
-main {
-    display: flex;
-    height: 100%;
-    width: 100%;
-    flex-direction: column;
-    background-color: var(--background-color);
-    transition: background-color 0.3s ease;
-    overflow: hidden;
+    background-color: var(--background-color-focus);
 }
 
 .content {
@@ -135,16 +124,13 @@ main {
     overflow-y: auto;
 }
 
-.container:hover {
-    background-color: var(--background-color-light);
-}
-
 @keyframes blink {
-0%, 100% { background-color: var(--background-color); }
+0% { background-color: var(--background-color-blur); }
 50% { background-color: var(--blink-color); }
+100% { background-color: var(--background-color-blur); }
 }
 
 .blinking {
-    animation: blink 1s infinite;
+    animation: blink 3s infinite;
 }
 </style>

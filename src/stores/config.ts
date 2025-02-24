@@ -1,90 +1,178 @@
-import { writable, get } from 'svelte/store';
+import { writable, get, Writable } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
-import type { AppConfig } from '../types/config';
-import { timer } from './timer';
+import type { AppConfig, ConfigState } from '../types/config';
+import { timerStore } from './timer';
 import { uiStore } from './ui';
+import { DURATIONS } from '../constants';
+import * as utils from '../utils/time';
 
-const DEFAULT_CONFIG: AppConfig = {
+const DEFAULT_CONFIG: ConfigState = {
+    isLoaded: false,
+    isError: false,
     timer: {
-        workDuration: 25 * 60,
-        shortBreakDuration: 5 * 60,
-        longBreakDuration: 15 * 60,
-        sessionsBeforeLongBreak: 4
+        workDuration: DURATIONS.DEFAULT_START,
+        shortBreakDuration: DURATIONS.BREAKS.OK,
+        longBreakDuration: DURATIONS.BREAKS.FLOW,
+        sessionsBeforeLongBreak: 4,
+        minimumDuration: DURATIONS.MINIMUM,
+        maximumDuration: DURATIONS.MAXIMUM
     },
     behavior: {
-        annoyingLevel: 'low',
+        annoyingLevel: 'high',
         theme: 'dark'
+    },
+    system: {
+        frontmostApp: ''
     }
 };
 
-function createConfigStore() {
-    const { subscribe, set, update } = writable<AppConfig>(DEFAULT_CONFIG);
+export class ConfigStore {
+    private store: Writable<ConfigState>;
 
-    return {
-        subscribe,
-        async load() {
-            try {
-                const config: any = await invoke('fetch_config').then(JSON.parse as any);
-                const newConfig: AppConfig = {
-                    timer: {
-                        workDuration: config.work_duration * 60,
-                        shortBreakDuration: config.short_break_duration * 60,
-                        longBreakDuration: config.long_break_duration * 60,
-                        sessionsBeforeLongBreak: config.sessions_before_long_break
-                    },
-                    behavior: {
-                        annoyingLevel: config.annoying_level,
-                        theme: config.theme as unknown as Theme
-                    }
-                };
+    constructor() {
+        this.store = writable<ConfigState>(DEFAULT_CONFIG);
 
-                set(newConfig);
+        // Setup persistent storage
+        this.store.subscribe((state: ConfigState) => {
+            localStorage.setItem('configStore', JSON.stringify(state));
+        });
 
-                // Update related stores
-                timer.updateConfig({
-                    workDuration: newConfig.timer.workDuration,
-                    shortBreakDuration: newConfig.timer.shortBreakDuration,
-                    longBreakDuration: newConfig.timer.longBreakDuration,
-                    sessionsBeforeLongBreak: newConfig.timer.sessionsBeforeLongBreak,
-                    annoyingLevel: newConfig.behavior.annoyingLevel as any,
-                    remainingTime: newConfig.timer.workDuration
-                });
+        // Load config immediately
+        this.initializeConfig();
+    }
 
-                uiStore.update(s => ({ ...s, theme: newConfig.behavior.theme }));
+    private async initializeConfig() {
+        try {
+            const config: any = await invoke('fetch_config').then(JSON.parse as any) || {};
+            const newConfig: AppConfig = {
+                timer: {
+                    workDuration: config.work_duration * 60 || DURATIONS.DEFAULT_START,
+                    shortBreakDuration: config.short_break_duration * 60 || DURATIONS.BREAKS.OK,
+                    longBreakDuration: config.long_break_duration * 60 || DURATIONS.BREAKS.FLOW,
+                    sessionsBeforeLongBreak: config.sessions_before_long_break,
+                    minimumDuration: config.minimum_duration * 60 || DURATIONS.MINIMUM,
+                    maximumDuration: config.maximum_duration * 60 || DURATIONS.MAXIMUM
+                },
+                behavior: {
+                    annoyingLevel: config.annoying_level as 'low' | 'medium' | 'high' || 'low',
+                    theme: config.theme as 'light' | 'dark' || 'dark'
+                },
+                system: {
+                    frontmostApp: config.frontmost_app || ''
+                }
+            };
 
-                return newConfig;
-            } catch (error) {
-                console.error('Error loading config:', error);
-                throw error;
-            }
-        },
+            this.set({
+                ...newConfig,
+                isLoaded: true,
+                isError: false
+            });
 
-        async save(partialConfig: Partial<AppConfig>) {
-            try {
-                const currentConfig = get(this);
-                const newConfig = { ...currentConfig, ...partialConfig };
-                await invoke('save_config', { config: JSON.stringify(newConfig) });
-                set(newConfig);
-                return newConfig;
-            } catch (error) {
-                console.error('Error saving config:', error);
-                throw error;
-            }
-        },
+            // Update related stores
+            this.updateRelatedStores(newConfig);
 
-        async reset() {
-            try {
-                await invoke('save_config', { config: JSON.stringify(DEFAULT_CONFIG) });
-                set(DEFAULT_CONFIG);
-                return DEFAULT_CONFIG;
-            } catch (error) {
-                console.error('Error resetting config:', error);
-                throw error;
-            }
+            console.log(newConfig);
+
+            return newConfig;
+        } catch (error) {
+            console.error('Error loading config:', error);
+            this.set({
+                ...DEFAULT_CONFIG,
+                isError: true,
+                errorMessage: error instanceof Error ? error.message : 'Unknown error'
+            });
         }
-    };
+    }
+
+    get state(): ConfigState {
+        return get(this.store);
+    }
+
+    subscribe = (run: (value: ConfigState) => void): (() => void) => {
+        return this.store.subscribe(run);
+    }
+
+    update = (updater: (state: ConfigState) => ConfigState): void => {
+        this.store.update(updater);
+    }
+
+    set(partial: Partial<ConfigState>): void {
+        this.update(s => ({ ...s, ...partial }));
+    }
+
+    // Method to manually reload config if needed
+    async load() {
+        return this.initializeConfig();
+    }
+
+    private updateRelatedStores(config: AppConfig) {
+        // Update timer store
+        timerStore.set({
+            time: {
+                total: config.timer.workDuration,
+                remaining: config.timer.workDuration,
+                display: utils.formatTime(config.timer.workDuration)
+            },
+            preferences: {
+                workDuration: config.timer.workDuration,
+                shortBreakDuration: config.timer.shortBreakDuration,
+                longBreakDuration: config.timer.longBreakDuration,
+                sessionsBeforeLongBreak: config.timer.sessionsBeforeLongBreak,
+                minimumDuration: config.timer.minimumDuration as number,
+                maximumDuration: config.timer.maximumDuration as number,
+                annoyingLevel: config.behavior.annoyingLevel
+            }
+        });
+
+        // Update UI store
+        uiStore.update(s => ({ ...s, theme: config.behavior.theme }));
+    }
+
+    async save(partialConfig: Partial<AppConfig>) {
+        try {
+            const currentConfig = this.state;
+            const newConfig = {
+                ...currentConfig,
+                ...partialConfig,
+                isLoaded: true,
+                isError: false
+            };
+
+            await invoke('save_config', {
+                config: JSON.stringify({
+                    work_duration: newConfig.timer.workDuration / 60,
+                    short_break_duration: newConfig.timer.shortBreakDuration / 60,
+                    long_break_duration: newConfig.timer.longBreakDuration / 60,
+                    sessions_before_long_break: newConfig.timer.sessionsBeforeLongBreak,
+                    annoying_level: newConfig.behavior.annoyingLevel,
+                    theme: newConfig.behavior.theme,
+                    frontmost_app: newConfig.system.frontmostApp
+                })
+            });
+
+            this.set(newConfig);
+            this.updateRelatedStores(newConfig);
+
+            return newConfig;
+        } catch (error) {
+            console.error('Error saving config:', error);
+            this.set({
+                isError: true,
+                errorMessage: error instanceof Error ? error.message : 'Unknown error'
+            });
+            throw error;
+        }
+    }
+
+    async reset() {
+        try {
+            await this.save(DEFAULT_CONFIG);
+            return DEFAULT_CONFIG;
+        } catch (error) {
+            console.error('Error resetting config:', error);
+            throw error;
+        }
+    }
 }
 
-export const configStore = createConfigStore();
-
-export { configStore as config };
+export const configStore = new ConfigStore();

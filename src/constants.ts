@@ -1,10 +1,10 @@
 export const LABELS = {
-    START: 'start',
-    PAUSE: 'pause',
-    RESUME: 'resume',
-    STOP: 'stop',
-    LOG: 'log',
-    SKIP_BREAK: 'skip',
+    START: 'Start',
+    PAUSE: 'Pause',
+    RESUME: 'Resume',
+    STOP: 'Stop',
+    LOG: 'Log',
+    SKIP_BREAK: 'Skip',
     FLOW: 'In Flow',
     FOCUSED: 'Focused',
     OK: 'OK',
@@ -23,25 +23,24 @@ export const TIMER_STATUS = {
     STOPPED: 'stopped'
 } as const;
 
-export const FLOW_STATE = {
+export const FLOW_STATUS = {
     DISTRACTED: 'distracted',
     OK: 'ok',
     FOCUSED: 'focused',
     FLOW: 'flow'
 } as const;
 
-
 export const DURATIONS = {
     MINIMUM: 2 * 60, // 2 minutes in seconds
     MAXIMUM: 50 * 60, // 50 minutes in seconds
-    DEFAULT_START: 2 * 60, // 2 minutes in seconds (starting small)
-    LOW_MOTIVATION_START: 2 * 60, // 2 minutes for low motivation
-    FLOW_EXTENSION: 25 * 60, // 25 minutes extension when in flow
+    DEFAULT_START: 5 * 60, // 5 minutes in seconds (starting small)
+    LOW_MOTIVATION_START: 2 * 60, // 2 minutes for very low motivation
+    FLOW_EXTENSION: 15 * 60, // 15 minutes extension when in flow
     INCREMENT: {
-        DISTRACTED: 2 * 60, // 2 minutes increment when previously distracted
-        OK: 3 * 60, // 3 minutes increment when doing ok
+        DISTRACTED: -3 * 60, // 3 minutes reduction when distracted
+        OK: 2 * 60, // 2 minutes increment when doing ok
         FOCUSED: 5 * 60, // 5 minutes increment when focused
-        FLOW: 25 * 60 // 25 minutes increment when in flow
+        FLOW: 10 * 60 // 10 minutes increment when in flow
     },
     BREAKS: {
         DISTRACTED: 5 * 60, // 5 minutes break when distracted
@@ -72,7 +71,7 @@ export const FLOW_THRESHOLDS = {
 
 export const DURATION_SUGGESTIONS = {
     FLOW: {
-        MIN_EXTENSION: 5 * 60,
+        MIN_EXTENSION: 2 * 60,
         MAX_EXTENSION: 15 * 60
     },
     FOCUSED: {
@@ -97,9 +96,4 @@ export const ANNOYING_LEVELS = {
     LOW: 'low',
     MEDIUM: 'medium',
     HIGH: 'high'
-} as const;
-
-export const THEMES = {
-    LIGHT: 'light',
-    DARK: 'dark'
 } as const;
