@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { AppConfig, ConfigState } from '../types/config';
 import { timerStore } from './timer';
 import { uiStore } from './ui';
-import { DURATIONS } from '../constants';
+import { DURATIONS, ANNOYING_LEVELS } from '../constants';
 import * as utils from '../utils/time';
 
 const DEFAULT_CONFIG: ConfigState = {
@@ -54,7 +54,7 @@ export class ConfigStore {
                     maximumDuration: config.maximum_duration * 60 || DURATIONS.MAXIMUM
                 },
                 behavior: {
-                    annoyingLevel: config.annoying_level as 'low' | 'medium' | 'high' || 'low',
+                    annoyingLevel: config.annoying_level as typeof ANNOYING_LEVELS[keyof typeof ANNOYING_LEVELS] || ANNOYING_LEVELS.HIGH,
                     theme: config.theme as 'light' | 'dark' || 'dark'
                 },
                 system: {
