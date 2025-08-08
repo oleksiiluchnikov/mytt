@@ -3,6 +3,7 @@ import { SESSION_TYPES } from '../constants';
 import type { SessionState } from '../types/index';
 import { flowStore } from './flow';
 import { breakStore } from './break';
+import { timerStore } from './timer';
 
 const DEFAULT_SESSION_STATE: SessionState = {
     type: 'work',
@@ -63,6 +64,7 @@ export class SessionStore {
             }));
         } else {
             const completedSessions = currentState.completed + 1;
+            const needLongBreak = completedSessions % get(timerStore).preferences.sessionsBeforeLongBreak === 0;
 
             this.update(s => ({
                 ...s,
