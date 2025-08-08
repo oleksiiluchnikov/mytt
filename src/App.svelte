@@ -9,23 +9,25 @@ import { timerStore } from './stores/timer';
 import { sessionStore } from './stores/session';
 import { flowStore } from './stores/flow';
 import { resizeWindow } from './utils/window';
+import { ANNOYING_LEVELS } from './constants';
 
 const onBlur = () => {
     document.body.style.backgroundColor = 'var(--background-color-blur)';
+    $configStore.behavior.annoyingLevel = ANNOYING_LEVELS.HIGH;
 };
 
 const onFocus = () => {
     document.body.style.backgroundColor = 'var(--background-color-focus)';
+    $configStore.behavior.annoyingLevel = ANNOYING_LEVELS.LOW;
 };
 
 let unsubscribers: Array<() => void> = [];
 
 onMount(async () => {
-    await configStore.load();
-    onBlur();
-
     listen('on_blur', onBlur);
     listen('on_focus', onFocus);
+
+    console.log('config', $configStore);
 
     // Subscribe to store changes that should trigger resize
     unsubscribers = [
@@ -33,7 +35,8 @@ onMount(async () => {
         sessionStore.subscribe(() => resizeWindow())
     ];
 
-    // Initial resize
+    // Initial
+    onBlur();
     resizeWindow();
 });
 
@@ -45,7 +48,7 @@ onDestroy(() => {
 </script>
 
 <main class="container"
-    class:blinking={($timerStore.status === 'paused' || $timerStore.status === 'stopped') && $configStore.behavior.annoyingLevel === 'high'}
+    class:blinking={($timerStore.status === 'paused' || $timerStore.status === 'stopped') && $configStore.behavior.annoyingLevel === ANNOYING_LEVELS.HIGH}
 >
     <div class="content">
         <div class="top-section">
