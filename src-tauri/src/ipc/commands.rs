@@ -1,9 +1,13 @@
 use crate::adapters::config_store::ConfigStore;
+use crate::adapters::history_store::HistoryStore;
 use crate::core::config::file_v1::FileConfigV1;
 use crate::core::domain::Event;
+use crate::core::suggestions::{DurationOption, SmartSuggestions};
 use crate::engine::runtime::Runtime;
 use crate::ipc::dto::AppStateDto;
 use crate::ipc::dto::IntentDto;
+use crate::core::history::SessionRecord;
+
 use tauri::State;
 
 #[tauri::command]
@@ -54,4 +58,23 @@ fn get_time(runtime: tauri::State<Runtime>) -> String {
         (seconds % 3600) / 60,
         seconds % 60
     )
+}
+
+#[tauri::command]
+pub fn get_duration_suggestions(
+    runtime: State<Runtime>,
+    history_store: State<HistoryStore>,
+) -> Vec<DurationOption> {
+    let state = runtime.get_state();
+    let recent_sessions = history_store.get_recent(10);
+    SmartSuggestions::suggest_start_duration(&state, &recent_sessions)
+}
+
+#[tauri::command]
+pub fn get_session_history(
+    history_store: State<HistoryStore>,
+    limit: Option<usize>,
+) -> Vec<SessionRecord> {
+    let count = limit.unwrap_or(20);
+    history_store.get_recent(count)
 }

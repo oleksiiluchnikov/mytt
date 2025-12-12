@@ -1,6 +1,7 @@
 <script lang="ts">
 export let action: string;
 export let label: string;
+export let variant: 'primary' | 'secondary' | 'warning' | 'ghost' = 'primary';
 export let description: string | undefined = undefined;
 </script>
 
@@ -60,4 +61,15 @@ button:active {
     font-size: 10px;
     opacity: 0.8;
 }
+
+button[data-variant="warning"] {
+    background-color: var(--warning-color, #ff6b35);
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.8; }
+}
+
 </style>

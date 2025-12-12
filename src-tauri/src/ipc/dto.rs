@@ -12,6 +12,9 @@ pub struct AppStateDto {
     pub work_sessions_completed: u32,
     pub flow_streak: u32,
 
+    pub daily_sessions_completed: u32,
+    pub daily_goal: u32,
+
     // Optional context fields
     pub last_rating: Option<FlowRating>,
     pub next_work_s: Option<u32>,
@@ -64,6 +67,9 @@ impl From<&AppState> for AppStateDto {
             last_rating: rating,
             next_work_s: next,
             break_suggestion: suggestion,
+
+            daily_sessions_completed: state.daily_sessions_completed,
+            daily_goal: state.daily_goal,
         }
     }
 }
@@ -71,12 +77,20 @@ impl From<&AppState> for AppStateDto {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum IntentDto {
-    Start { duration_s: Option<u32> },
+    Start {
+        #[serde(rename = "durationS")] // Fixes potential future error here too
+        duration_s: Option<u32>,
+    },
     Pause,
     Resume,
     Stop,
-    Rate { rating: FlowRating },
-    ChooseBreak { take_break: bool },
+    Rate {
+        rating: FlowRating,
+    },
+    ChooseBreak {
+        #[serde(rename = "takeBreak")] // <--- THE FIX
+        take_break: bool,
+    },
     SkipBreak,
     Log,
 }
