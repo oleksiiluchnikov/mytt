@@ -2,7 +2,7 @@
 name = "mytt"
 version = "0.0.0"
 description = "A Tauri App"
-authors = ["you"]
+authors = ["Oleksii Luchnikov <oleksiiluchnikov@gmail.com>"]
 license = ""
 repository = ""
 edition = "2021"

@@ -1,54 +1,30 @@
 <script lang="ts">
 import { onMount, onDestroy } from 'svelte';
-import { listen } from '@tauri-apps/api/event';
 import { configStore } from './stores/config';
 import ButtonGroup from './components/ButtonGroup.svelte';
 import ProgressBar from './components/ProgressBar.svelte';
+    import { appStore } from './stores/app';
+
+
 import FocusStats from './components/FocusStats.svelte';
-import { timerStore } from './stores/timer';
-import { sessionStore } from './stores/session';
-import { flowStore } from './stores/flow';
-import { resizeWindow } from './utils/window';
-import { ANNOYING_LEVELS } from './constants';
 
-const onBlur = () => {
-    document.body.style.backgroundColor = 'var(--background-color-blur)';
-    $configStore.behavior.annoyingLevel = ANNOYING_LEVELS.HIGH;
-};
+    import { resizeWindow } from './utils/window';
 
-const onFocus = () => {
-    document.body.style.backgroundColor = 'var(--background-color-focus)';
-    $configStore.behavior.annoyingLevel = ANNOYING_LEVELS.LOW;
-};
+    let unlisten: () => void;
 
-let unsubscribers: Array<() => void> = [];
+    onMount(async () => {
+        unlisten = await appStore.init() as any; // Cast if TS complains about void vs UnlistenFn
+    });
 
-onMount(async () => {
-    listen('on_blur', onBlur);
-    listen('on_focus', onFocus);
+    onDestroy(() => {
+        if (unlisten) unlisten();
+    });
 
-    console.log('config', $configStore);
-
-    // Subscribe to store changes that should trigger resize
-    unsubscribers = [
-        flowStore.subscribe(() => resizeWindow()),
-        sessionStore.subscribe(() => resizeWindow())
-    ];
-
-    // Initial
-    onBlur();
-    resizeWindow();
-});
-
-onDestroy(() => {
-    // Cleanup subscriptions
-    unsubscribers.forEach(unsubscribe => unsubscribe());
-});
-
+$: $appStore.status, resizeWindow();
 </script>
 
 <main class="container"
-    class:blinking={($timerStore.status === 'paused' || $timerStore.status === 'stopped') && $configStore.behavior.annoyingLevel === ANNOYING_LEVELS.HIGH}
+    class:blinking={$appStore.status === 'paused' && $configStore.behavior.annoyingLevel === 'high'}
 >
     <div class="content">
         <div class="top-section">

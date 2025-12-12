@@ -1,232 +1,54 @@
 <script lang="ts">
-import { LABELS, FLOW_STATUS, TIMER_STATUS, DURATION_SUGGESTIONS, FOCUS_STATES, BREAK_TYPE, DURATIONS } from '../constants';
-import type { TimerStatus, FlowState, FlowStatus } from '../types/index';
-import { timerStore } from '../stores/timer';
-import { sessionStore } from '../stores/session';
-import { breakStore } from '../stores/break';
-import { flowStore } from '../stores/flow';
-import Button from './Button.svelte';
-import { createEventDispatcher } from 'svelte';
-import { invoke } from '@tauri-apps/api/core';
+    import { appStore } from '../stores/app';
+    import Button from './Button.svelte';
 
-interface FlowButton {
-    action: string;
-    state: FlowState;
-    label: string;
-    description: string;
-    suggestion: number | null;
-}
-
-interface ActionButton {
-    action: string;
-}
-
-const dispatch = createEventDispatcher<{
-    flowState: FlowStatus;
-    action: string;
-}>();
-
-
-// Button configurations
-$: flowButtons = [
-    {
-        action: LABELS.FLOW,
-        state: FLOW_STATUS.FLOW,
-        label: FOCUS_STATES.FLOW.label,
-        description: FOCUS_STATES.FLOW.description,
-        suggestion: DURATION_SUGGESTIONS.FLOW.MIN_EXTENSION
-    },
-    {
-        action: LABELS.FOCUSED,
-        state: FLOW_STATUS.FOCUSED,
-        label: FOCUS_STATES.HIGHLY_FOCUSED.label,
-        description: FOCUS_STATES.HIGHLY_FOCUSED.description,
-        suggestion: DURATION_SUGGESTIONS.FOCUSED.INCREMENT
-    },
-    {
-        action: LABELS.OK,
-        state: FLOW_STATUS.OK,
-        label: FOCUS_STATES.SOMEWHAT_FOCUSED.label,
-        description: FOCUS_STATES.SOMEWHAT_FOCUSED.description,
-        suggestion: null
-    },
-    {
-        action: LABELS.DISTRACTED,
-        state: FLOW_STATUS.DISTRACTED,
-        label: FOCUS_STATES.DISTRACTED.label,
-        description: FOCUS_STATES.DISTRACTED.description,
-        suggestion: -DURATION_SUGGESTIONS.DISTRACTED.REDUCTION
+    function send(type: string, payload: any = {}) {
+        appStore.intent({ type, ...payload });
     }
-];
-
-// Event handlers
-function handleAction(action: string) {
-    dispatch('action', action);
-
-    switch (action) {
-        case LABELS.START:
-            timerStore.start();
-            break;
-        case LABELS.RESUME:
-            timerStore.resume();
-            break;
-        case LABELS.PAUSE:
-            timerStore.pause();
-            break;
-        case LABELS.STOP:
-            timerStore.stop();
-            break;
-        case LABELS.SKIP_BREAK:
-            breakStore.skip();
-            sessionStore.set({
-                type: 'work',
-                completed: $sessionStore.completed
-            });
-            timerStore.update(s => ({
-                ...s,
-                time: {
-                    total: s.preferences.workDuration,
-                    remaining: s.preferences.workDuration,
-                    display: formatTime(s.preferences.workDuration)
-                }
-            }));
-            timerStore.start();
-            break;
-        case LABELS.LOG:
-            invoke('on_log').then(console.log);
-            break;
-    }
-}
-
-function formatTime(time: number): string {
-    const minutes = Math.floor(time / 60);
-    const seconds = time % 60;
-    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-}
-
-function handleFlowState(status: FlowStatus) {
-    dispatch('flowState', status);
-
-    // Update flow store
-    $flowStore.status = status;
-    $flowStore.prompt.isActive = false;
-
-    // Calculate next duration based on flow state
-    const newDuration = timerStore.nextDuration(
-        $timerStore.preferences.workDuration,
-        $flowStore.status,
-        $flowStore.streak
-    );
-
-    // Handle break session if needed
-    switch (flowStore.shouldTakeBreak()) {
-        case BREAK_TYPE.REQUIRED:
-        case BREAK_TYPE.SUGGESTED:
-            sessionStore.set({
-                type: 'shortBreak',
-                completed: $sessionStore.completed + 1,
-                lastSessionDuration: $timerStore.preferences.workDuration,
-                suggestedNextDuration: newDuration,
-            });
-
-            // Set up break duration based on flow status
-            const breakDuration = DURATIONS.BREAKS[status.toUpperCase()];
-            if (breakDuration > 0) {
-                timerStore.update(s => ({
-                    ...s,
-                    time: {
-                        total: breakDuration,
-                        remaining: breakDuration,
-                        display: formatTime(breakDuration)
-                    },
-                    progress: {
-                        ...s.progress,
-                        percentage: (breakDuration / s.time.total) * 100
-                    }
-                }));
-            }
-            break;
-        default:
-            // Continue with work session if no break needed (in flow or focused)
-            sessionStore.set({
-                type: 'work',
-                completed: $sessionStore.completed,
-                lastSessionDuration: $timerStore.preferences.workDuration,
-                suggestedNextDuration: newDuration,
-            });
-
-            timerStore.update(s => ({
-                ...s,
-                time: {
-                    total: newDuration,
-                    remaining: newDuration,
-                    display: formatTime(newDuration)
-                },
-                progress: {
-                    ...s.progress,
-                    percentage: (newDuration / s.time.total) * 100
-                }
-            }));
-    }
-}
-
-// Action buttons configurations
-const runningButtons: ActionButton[] = $sessionStore.type === 'work'
-    ? [{ action: LABELS.PAUSE }, { action: LABELS.STOP }]
-    : [{ action: LABELS.PAUSE }, { action: LABELS.STOP }, { action: LABELS.SKIP_BREAK }];
-
-const pausedButtons: ActionButton[] = $sessionStore.type === 'work'
-    ? [{ action: LABELS.RESUME }, { action: LABELS.STOP }]
-    : [{ action: LABELS.RESUME }, { action: LABELS.STOP }, { action: LABELS.SKIP_BREAK }];
-
-const stoppedButtons: ActionButton[] = $sessionStore.type === 'work'
-    ? [{ action: LABELS.START }]
-    : [{ action: LABELS.START }, { action: LABELS.SKIP_BREAK }];
-
-
-// Current buttons state
-$: currentButtons = $flowStore.prompt.isActive
-    ? flowButtons
-    : $timerStore.status === TIMER_STATUS.RUNNING
-        ? runningButtons
-        : $timerStore.status === TIMER_STATUS.PAUSED
-            ? pausedButtons
-            : stoppedButtons;
 </script>
 
-<div class="buttons-container" role="group" aria-label="Timer controls">
-    {#if $flowStore.prompt.isActive}
+<!-- src/components/ButtonGroup.svelte -->
+<div class="buttons-container">
+    {#if $appStore.status === 'idle'}
+        <!-- Change 'Start' to 'start' -->
+        <Button label="Start" action="start" on:click={() => send('start')} />
+
+    {:else if $appStore.status === 'running'}
+        <!-- Change 'Pause' to 'pause', 'Stop' to 'stop' -->
+        <Button label="Pause" action="pause" on:click={() => send('pause')} />
+        <Button label="Stop" action="stop" on:click={() => send('stop')} />
+
+    {:else if $appStore.status === 'paused'}
+        <!-- Change 'Resume' to 'resume' -->
+        <Button label="Resume" action="resume" on:click={() => send('resume')} />
+        <Button label="Stop" action="stop" on:click={() => send('stop')} />
+
+    {:else if $appStore.status === 'ratingPrompt'}
         <div class="rating-buttons">
-            {#each flowButtons as { action, state, label, description, suggestion } (action)}
-                <Button
-                    {action}
-                    label={label}
-                    description={``}
-                    on:click={() => {
-                        if (!state) {
-                            return;
-                        }
-                        handleFlowState(state);
-                    }}
-                />
-            {/each}
+            <!-- Change 'Rate' to 'rate' -->
+            <Button label="Flow" action="flow" on:click={() => send('rate', { rating: 'flow' })} />
+            <Button label="Focused" action="focused" on:click={() => send('rate', { rating: 'focused' })} />
+            <Button label="OK" action="ok" on:click={() => send('rate', { rating: 'ok' })} />
+            <Button label="Distracted" action="distracted" on:click={() => send('rate', { rating: 'distracted' })} />
         </div>
-    {:else}
-        <div class="action-buttons">
-            {#each currentButtons as { action } (action)}
-                <Button
-                    {action}
-                    label={action}
-                    on:click={() => handleAction(action)}
-                />
-            {/each}
+
+    {:else if $appStore.status === 'decision'}
+        <div class="decision-buttons">
+            <!-- Change 'ChooseBreak' to 'chooseBreak' -->
+            <Button
+                label="Continue Work"
+                description={`Next: ${Math.floor(($appStore.nextWorkS || 0)/60)}m`}
+                action="continue"
+                on:click={() => send('chooseBreak', { takeBreak: false })}
+            />
+            <Button
+                label="Take Break"
+                description={$appStore.breakSuggestion ? 'Suggested' : 'Optional'}
+                action="break"
+                on:click={() => send('chooseBreak', { takeBreak: true })}
+            />
         </div>
     {/if}
-    <Button
-        action={LABELS.LOG}
-        label={LABELS.LOG}
-        on:click={() => handleAction(LABELS.LOG)}
-    />
 </div>
 
 <style>
