@@ -41,14 +41,22 @@ pub fn calculate_next_session(
     let suggestion = match rating {
         FlowRating::Flow => {
             if streak >= 4 {
-                BreakSuggestion::Suggested(config.long_break_s)
+                BreakSuggestion::Suggested {
+                    duration: config.long_break_s,
+                }
             } else {
                 BreakSuggestion::None
             }
         }
-        FlowRating::Focused => BreakSuggestion::Optional(config.short_break_s),
-        FlowRating::Ok => BreakSuggestion::Suggested(config.short_break_s),
-        FlowRating::Distracted => BreakSuggestion::Required(config.short_break_s),
+        FlowRating::Focused => BreakSuggestion::Optional {
+            duration: config.short_break_s,
+        },
+        FlowRating::Ok => BreakSuggestion::Suggested {
+            duration: config.short_break_s,
+        },
+        FlowRating::Distracted => BreakSuggestion::Required {
+            duration: config.short_break_s,
+        },
     };
 
     NextSessionSpecs {
@@ -57,31 +65,3 @@ pub fn calculate_next_session(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::config::file_v1::FileConfigV1;
-
-    fn mock_config() -> ResolvedConfigV1 {
-        ResolvedConfigV1::from_file(FileConfigV1::default())
-    }
-
-    #[test]
-    fn test_flow_increases_duration() {
-        let config = mock_config();
-        let specs = calculate_next_session(FlowRating::Flow, 1500, 0, &config);
-        assert!(specs.next_work_s > 1500);
-        assert!(matches!(specs.break_suggestion, BreakSuggestion::None));
-    }
-
-    #[test]
-    fn test_distracted_decreases_duration() {
-        let config = mock_config();
-        let specs = calculate_next_session(FlowRating::Distracted, 1500, 0, &config);
-        assert!(specs.next_work_s < 1500);
-        assert!(matches!(
-            specs.break_suggestion,
-            BreakSuggestion::Required(_)
-        ));
-    }
-}

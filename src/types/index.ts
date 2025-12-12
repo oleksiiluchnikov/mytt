@@ -8,8 +8,17 @@ export interface AppStateDto {
     flowStreak: number;
     lastRating?: 'distracted' | 'ok' | 'focused' | 'flow';
     nextWorkS?: number;
-    breakSuggestion?: 'none' | { type: 'optional' | 'suggested' | 'required', duration: number };
+    breakSuggestion?: BreakSuggestion;
+    dailySessionsCompleted: number;
+    dailyGoal: number;
 }
+
+type BreakSuggestion =
+  | { type: 'none' }
+  | { type: 'optional', duration: number }
+  | { type: 'suggested', duration: number }
+  | { type: 'required', duration: number };
+
 
 
 // Helper types for UI components

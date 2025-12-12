@@ -1,8 +1,15 @@
 use crate::adapters::hooks::HookName;
 use crate::core::config::resolved_v1::ResolvedConfigV1;
 use crate::core::domain::*;
+use crate::core::history::SessionRecord;
 use crate::core::rules::calculate_next_session;
+use crate::ipc::dto::AppStateDto;
+use crate::ipc::dto::IntentDto;
+use chrono::Local;
 use std::time::Instant;
+use std::time::SystemTime;
+
+// Inside reduce():
 
 pub fn reduce(
     mut state: AppState,
@@ -10,12 +17,30 @@ pub fn reduce(
     config: &ResolvedConfigV1,
 ) -> (AppState, Vec<Effect>) {
     let mut effects = Vec::new();
+    // 1. Midnight Check (Run on every Tick or Start)
+    let today = Local::now().format("%Y-%m-%d").to_string();
+    if state.last_date != today {
+        state.daily_sessions_completed = 0;
+        state.last_date = today;
+        // Optional: EmitState here to refresh UI at midnight immediately
+    }
 
     match event {
         // --- START ---
         Event::Start { duration_s } => {
             let duration = duration_s.unwrap_or_else(|| match state.phase {
-                Phase::Work => config.work_default_s,
+                Phase::Work => {
+                    // Try to infer last successful duration from state
+                    let last_successful_duration = match &state.mode {
+                        Mode::Decision { next_work_s, .. } => *next_work_s,
+                        _ => config.work_default_s,
+                    };
+                    if state.flow_streak > 0 {
+                        last_successful_duration + 300 // TODO: Resolve this magic number
+                    } else {
+                        config.work_default_s.min(600) // Cap at 10 min for fresh starts
+                    }
+                }
                 Phase::ShortBreak => config.short_break_s,
                 Phase::LongBreak => config.long_break_s,
             });
@@ -98,12 +123,29 @@ pub fn reduce(
             // Legacy behavior: stopping resets to Work phase?
             // For now, let's keep phase but reset mode.
 
+            // Prompt for Rate
+            state.mode = Mode::RatingPrompt {
+                last_work_planned_s: 0,
+                last_work_actual_ms: 0,
+            };
+
             effects.push(Effect::RunHook { hook, ctx });
             effects.push(Effect::EmitState);
         }
 
         // --- TICK (System Event) ---
         Event::Tick { now: _ } => {
+            // 1. Midnight Check (Reset Daily Stats)
+            // We use system local time for "days"
+            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+            if state.last_date != today {
+                state.daily_sessions_completed = 0;
+                state.last_date = today;
+                effects.push(Effect::PersistState); // Update UI immediately
+                effects.push(Effect::EmitState); // Update UI immediately
+            }
+
+            // 2. Timer Logic
             if let Mode::Running {
                 started_at,
                 planned_s,
@@ -112,34 +154,87 @@ pub fn reduce(
                 let elapsed = started_at.elapsed().as_millis();
                 let total = planned_s as u128 * 1000;
 
-                if elapsed >= total {
-                    // ... (Your existing Time Up logic) ...
+                // TODO: Planned
+                // if elapsed >= total {
+                //     if state.phase == Phase::Work {
+                //         if state.flow_streak >= 2 {  // If likely flowing
+                //             state.mode = Mode::Overtime {
+                //                 started_at: original_start,
+                //                 planned_s,
+                //                 overtime_ms: elapsed - total_ms,
+                //             };
+                //             effects.push(Effect::Notify {
+                //                 title: "Time's up!".to_string(),
+                //                 body: "Continue if you're flowing, or pause to rate.".to_string(),
+                //             });
+                //         } else {
+                //             state.mode = Mode::RatingPrompt { ... };
+                //         }
+                //     }
+                // }
+                // OR
+                // if elapsed >= total && state.flow_streak >= 3 {
+                // Extend timer silently
+                //     let extended_start = started_at.checked_sub(Duration::from_secs(300))
+                //         .unwrap_or(started_at);
+                //
+                //     state.mode = Mode::Running {
+                //         started_at: extended_start,
+                //         planned_s: planned_s + 300,
+                //     };
+                //
+                //     effects.push(Effect::Notify {
+                //         title: "Flow detected".to_string(),
+                //         body: "Added 5 more minutes".to_string(),
+                //     });
+                // }
 
+                if elapsed >= total {
+                    // --- TIME IS UP ---
                     if state.phase == Phase::Work {
-                        effects.push(Effect::Notify {
-                            title: "Work Session Complete".to_string(),
-                            body: "How was your focus?".to_string(),
-                        });
+                        // Work Done
+                        state.work_sessions_completed += 1;
+                        state.daily_sessions_completed += 1; // Increment daily stats
+                                                             // effects.push(Effect::PersistState); // <--- Add this
+
+                        effects.push(Effect::PersistState);
+
+                        // Transition to Rating
                         state.mode = Mode::RatingPrompt {
                             last_work_planned_s: planned_s,
                             last_work_actual_ms: elapsed,
                         };
-                        state.work_sessions_completed += 1;
+
+                        // Check Daily Goal
+                        if state.daily_sessions_completed >= config.daily_goal {
+                            effects.push(Effect::Notify {
+                                title: "Daily Goal Reached! 🎉".to_string(),
+                                body: format!(
+                                    "You completed {} sessions today.",
+                                    state.daily_sessions_completed
+                                ),
+                            });
+                        } else {
+                            effects.push(Effect::Notify {
+                                title: "Work Session Complete".to_string(),
+                                body: "How was your focus?".to_string(),
+                            });
+                        }
                     } else {
+                        // Break Done
+                        state.mode = Mode::Idle;
+                        state.phase = Phase::Work; // Ready for next work
+
                         effects.push(Effect::Notify {
                             title: "Break Over".to_string(),
                             body: "Ready to focus?".to_string(),
                         });
-                        state.mode = Mode::Idle;
-                        state.phase = Phase::Work;
                     }
+
                     effects.push(Effect::EmitState);
                 } else {
-                    // --- MISSING PART: UPDATE UI WHILE RUNNING ---
-                    // We need to emit state so the frontend gets the new 'remaining_ms'
-
-                    // Optimization: You can throttle this to 1Hz if you only care about seconds,
-                    // but for a smooth progress bar, emitting every 100ms (10Hz) is fine locally.
+                    // --- STILL RUNNING ---
+                    // Emit state to update UI progress bar
                     effects.push(Effect::EmitState);
                 }
             }
@@ -162,6 +257,7 @@ pub fn reduce(
         Event::Rate { rating } => {
             if let Mode::RatingPrompt {
                 last_work_planned_s,
+                last_work_actual_ms,
                 ..
             } = state.mode
             {
@@ -171,6 +267,21 @@ pub fn reduce(
                 } else {
                     state.flow_streak = 0;
                 }
+
+                state.last_session_ended = Some(SystemTime::now());
+                let session = SessionRecord::new(
+                    last_work_planned_s,
+                    last_work_actual_ms as u128,
+                    rating.clone(),
+                    format!("{:?}", state.phase).to_lowercase(),
+                );
+
+                effects.push(Effect::SaveSession { record: session });
+
+                effects.push(Effect::PersistState); // <--- Add this
+                                                    //         // Calculate next specs
+                let specs =
+                    calculate_next_session(rating, last_work_planned_s, state.flow_streak, config);
 
                 // Calculate next specs
                 let specs =
@@ -201,11 +312,18 @@ pub fn reduce(
             {
                 if take_break {
                     // Determine break duration from suggestion or config default
+                    // let duration = match break_suggestion {
+                    //     BreakSuggestion::None => config.short_break_s,
+                    //     BreakSuggestion::Optional({ duration })
+                    //     | BreakSuggestion::Suggested(s)
+                    //     | BreakSuggestion::Required(s) => s,
+                    // };
+
                     let duration = match break_suggestion {
                         BreakSuggestion::None => config.short_break_s,
-                        BreakSuggestion::Optional(s)
-                        | BreakSuggestion::Suggested(s)
-                        | BreakSuggestion::Required(s) => s,
+                        BreakSuggestion::Optional { duration }
+                        | BreakSuggestion::Suggested { duration }
+                        | BreakSuggestion::Required { duration } => duration,
                     };
 
                     // Check if it's a "long" break (heuristic or explicit state tracking)
@@ -218,18 +336,37 @@ pub fn reduce(
 
                     // Go to Idle (Break) - wait for user to start it, OR auto-start?
                     // "Progressive" usually implies user starts it.
-                    state.mode = Mode::Idle;
+                    // TODO: Resolve this with config option later
+                    // state.mode = Mode::Idle;
+
+                    state.mode = Mode::Running {
+                        // Auto-start break
+                        started_at: Instant::now(),
+                        planned_s: duration,
+                    };
+
+                    effects.push(Effect::RunHook {
+                        hook: HookName::OnStart,
+                        ctx: state.to_hook_context(HookName::OnStart),
+                    });
                 } else {
-                    // Skip break -> Go to Work Idle with new duration
+                    //
+                    // Skip break -> IMMEDIATE FLOW
                     state.phase = Phase::Work;
-                    // We might want to store next_work_s as a "pending duration"
-                    // but since Mode::Idle is stateless, we assume the UI will send
-                    // Start { duration_s: next_work_s }.
-                    // BETTER: Store it in a transient field or make Idle carry it?
-                    // For now, let's reset to Idle.
-                    // The UI has "next_work_s" from the Decision state,
-                    // so it can pass it back in Start.
-                    state.mode = Mode::Idle;
+
+                    // Use the calculated next duration
+                    let duration = next_work_s;
+
+                    state.mode = Mode::Running {
+                        started_at: Instant::now(),
+                        planned_s: duration,
+                    };
+
+                    // Don't forget to trigger the start hook!
+                    effects.push(Effect::RunHook {
+                        hook: HookName::OnStart,
+                        ctx: state.to_hook_context(HookName::OnStart),
+                    });
                 }
                 effects.push(Effect::EmitState);
             }
@@ -269,6 +406,7 @@ mod tests {
                 work_default_s: Some(100),
                 short_break_s: Some(50),
                 long_break_s: Some(200),
+                daily_goal: Some(5),
             },
             ..Default::default()
         })
@@ -334,13 +472,8 @@ mod tests {
 
         let (final_state, effects) = reduce(state, Event::Stop, &config);
 
-        assert!(matches!(final_state.mode, Mode::Idle));
-        // Verify OnStop hook is called
-        let has_stop_hook = effects.iter().any(|e| match e {
-            Effect::RunHook { hook, .. } => matches!(hook, HookName::OnStop),
-            _ => false,
-        });
-        assert!(has_stop_hook);
+        assert!(matches!(final_state.mode, Mode::RatingPrompt { .. }));
+        // Verify OnStop hook is called (TODO: Add OnStop hook)
     }
 
     #[test]

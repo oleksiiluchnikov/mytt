@@ -158,6 +158,9 @@ pub fn main() {
             on_focus,
             on_blur,
             get_frontmost_application,
+            // IPC
+            get_duration_suggestions,
+            get_session_history,
         ])
         .on_window_event(|window, event| {
             on_window_event(window, event);

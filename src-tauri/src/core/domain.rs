@@ -1,6 +1,8 @@
 use crate::adapters::hooks::HookName;
+use crate::core::history::SessionRecord;
 use serde::{Deserialize, Serialize};
 use std::time::Instant; // We reuse the existing HookName
+use std::time::SystemTime;
 
 // --- 1. Core State Enums ---
 
@@ -22,12 +24,12 @@ pub enum FlowRating {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", tag = "type")]
 pub enum BreakSuggestion {
     None,
-    Optional(u32),  // Seconds
-    Suggested(u32), // Seconds
-    Required(u32),  // Seconds
+    Optional { duration: u32 },
+    Suggested { duration: u32 },
+    Required { duration: u32 },
 }
 
 // --- 2. Runtime Mode ---
@@ -67,6 +69,13 @@ pub struct AppState {
     pub work_sessions_completed: u32,
     pub flow_streak: u32,
 
+    // Daily stats
+    pub daily_goal: u32,
+    pub daily_sessions_completed: u32,
+    pub last_date: String,
+
+    pub last_session_ended: Option<SystemTime>,
+
     // Config / Context
     pub frontmost_app: Option<String>,
 }
@@ -78,6 +87,11 @@ impl Default for AppState {
             mode: Mode::Idle,
             work_sessions_completed: 0,
             flow_streak: 0,
+            daily_sessions_completed: 0,
+            daily_goal: 5,
+            last_session_ended: None, // Add this
+
+            last_date: chrono::Local::now().format("%Y-%m-%d").to_string(),
             frontmost_app: None,
         }
     }
@@ -114,6 +128,10 @@ pub enum Effect {
         ctx: crate::adapters::hooks::HookContext,
     },
     PersistConfig,
+    PersistState,
+    SaveSession {
+        record: SessionRecord,
+    },
 }
 
 use crate::adapters::hooks::HookContext;
@@ -206,6 +224,6 @@ mod tests {
 
         assert!(json.contains("\"status\":\"decision\""));
         assert!(json.contains("\"lastRating\":\"flow\""));
-        assert!(json.contains("\"breakSuggestion\":\"none\""));
+        assert!(json.contains("\"breakSuggestion\":{\"type\":\"none\"}"));
     }
 }

@@ -5,6 +5,7 @@ pub struct ResolvedConfigV1 {
     pub work_default_s: u32,
     pub short_break_s: u32,
     pub long_break_s: u32,
+    pub daily_goal: u32,
     pub theme: String,
 }
 
@@ -14,6 +15,7 @@ impl ResolvedConfigV1 {
             work_default_s: file.timer.work_default_s.unwrap_or(1500).max(60),
             short_break_s: file.timer.short_break_s.unwrap_or(300).max(60),
             long_break_s: file.timer.long_break_s.unwrap_or(900).max(60),
+            daily_goal: file.timer.daily_goal.unwrap_or(5).max(1),
             theme: file.behavior.theme.unwrap_or_else(|| "dark".to_string()),
         }
     }

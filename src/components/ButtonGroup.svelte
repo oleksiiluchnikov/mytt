@@ -10,8 +10,12 @@
 <!-- src/components/ButtonGroup.svelte -->
 <div class="buttons-container">
     {#if $appStore.status === 'idle'}
-        <!-- Change 'Start' to 'start' -->
-        <Button label="Start" action="start" on:click={() => send('start')} />
+        <div class="duration-selector">
+            <Button label="2m" action="start" on:click={() => send('start', { durationS: 120 })} />
+            <Button label="5m" action="start"on:click={() => send('start', { durationS: 300 })} />
+            <Button label="10m"action="start" on:click={() => send('start', { durationS: 600 })} />
+            <Button label="Start" action="start" on:click={() => send('start')} />
+        </div>
 
     {:else if $appStore.status === 'running'}
         <!-- Change 'Pause' to 'pause', 'Stop' to 'stop' -->
@@ -31,25 +35,51 @@
             <Button label="OK" action="ok" on:click={() => send('rate', { rating: 'ok' })} />
             <Button label="Distracted" action="distracted" on:click={() => send('rate', { rating: 'distracted' })} />
         </div>
+{/if}
+</div>
 
-    {:else if $appStore.status === 'decision'}
-        <div class="decision-buttons">
-            <!-- Change 'ChooseBreak' to 'chooseBreak' -->
+{#if $appStore.status === 'decision'}
+    <div class="decision-container">
+        <!-- Continue Work Button -->
+        <Button
+            label="Continue Work"
+            description={`Next: ${Math.floor($appStore.nextWorkS / 60)}m`}
+            variant="primary"
+            action="continue"
+            on:click={() => send('chooseBreak', { takeBreak: false })}
+        />
+
+        <!-- Break Button with Context -->
+        {#if $appStore.breakSuggestion?.type === 'required'}
             <Button
-                label="Continue Work"
-                description={`Next: ${Math.floor(($appStore.nextWorkS || 0)/60)}m`}
-                action="continue"
-                on:click={() => send('chooseBreak', { takeBreak: false })}
-            />
-            <Button
-                label="Take Break"
-                description={$appStore.breakSuggestion ? 'Suggested' : 'Optional'}
+                label="Take Break (Required)"
+                description={`${Math.floor($appStore.breakSuggestion.duration / 60)}m rest needed`}
+                variant="warning"
                 action="break"
                 on:click={() => send('chooseBreak', { takeBreak: true })}
             />
-        </div>
-    {/if}
-</div>
+        {:else if $appStore.breakSuggestion?.type === 'suggested'}
+            <Button
+                label="Take Break"
+                description={`${Math.floor($appStore.breakSuggestion.duration / 60)}m suggested`}
+                variant="secondary"
+                action="break"
+                on:click={() => send('chooseBreak', { takeBreak: true })}
+            />
+        {:else}
+            <Button
+                label="Take Break (Optional)"
+                description="If you need it"
+                variant="ghost"
+                action="break"
+                on:click={() => send('chooseBreak', { takeBreak: true })}
+            />
+        {/if}
+
+    </div>
+{/if}
+
+            <!-- Change 'ChooseBreak' to 'chooseBreak' -->
 
 <style>
 .buttons-container {
