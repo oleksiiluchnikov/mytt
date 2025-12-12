@@ -1,4 +1,3 @@
-
 // tests/session.rs
 #[cfg(test)]
 mod session_tests {
@@ -64,4 +63,3 @@ mod session_tests {
         assert_eq!(session.current_session, SessionType::Work);
     }
 }
-

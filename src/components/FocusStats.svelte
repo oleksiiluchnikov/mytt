@@ -1,27 +1,20 @@
 <script lang="ts">
-import { timerStore } from '../stores/timer';
-import { sessionStore } from '../stores/session';
-import { flowStore } from '../stores/flow';
-import { FLOW_STATUS } from '../constants';
-// camelCase to label
-function camelCaseToLabel(str: string): string {
-    return str.replace(/([A-Z])/g, ' $1').toLowerCase().trim();
-}
+    import { appStore, timeDisplay } from '../stores/app';
 </script>
 
-<div class="timer-display" class:flow={$flowStore.status === FLOW_STATUS.FLOW}>
+<div class="timer-display" class:flow={$appStore.flowStreak > 0}>
     <div class="timer-label-container">
-        <h1 class="timer-label minutes">{$timerStore.time.display.slice(0, 2)}</h1>
-        <h1 class="timer-label-separator">:</h1>
-        <h1 class="timer-label seconds">{$timerStore.time.display.slice(3, 5)}</h1>
+        <!-- Direct use of derived store -->
+        <h1 class="timer-label">{$timeDisplay}</h1>
     </div>
+
     <div class="session-info">
-        <span class="session-type" style:color={$sessionStore.type.toLowerCase().includes('break') ? 'var(--break-text-color)' : 'inherit'}>{camelCaseToLabel($sessionStore.type)}</span>
+        <span class="session-type">{$appStore.phase}</span>
         <div class="flow-info">
-        <span class="flow-status">{$flowStore.status}</span>
-        {#if $flowStore.status === FLOW_STATUS.FLOW}
-            <span class="badge">{$flowStore.streak}</span>
-        {/if}
+            <span class="flow-status">{$appStore.status}</span>
+            {#if $appStore.flowStreak > 0}
+                <span class="badge">{$appStore.flowStreak}x</span>
+            {/if}
         </div>
     </div>
 </div>
